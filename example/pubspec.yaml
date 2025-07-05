@@ -1,0 +1,17 @@
+name: example
+publish_to: "none"
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  appfuse:
+    path: ../
+  
+flutter:
+  uses-material-design: true
+
+  assets:
+    - config/
