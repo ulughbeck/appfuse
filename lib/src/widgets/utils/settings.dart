@@ -79,7 +79,7 @@ class ConfigSettings extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<AppFuseState>(
         valueListenable: context.fuse,
         builder: (context, state, _) {
-          if (state.isInitializing) return const _SettingsLoader();
+          if (state.isProcessing) return const _SettingsLoader();
 
           switch (mode) {
             case RenderMode.sheet:
@@ -141,11 +141,11 @@ class _SettingsBody extends StatelessWidget {
                       children!,
                       const Divider(thickness: 1),
                     ],
-                    if (fuseState.config != null)
+                    if (fuseState.config is! EmptyConfig)
                       SettingTile(
                         icon: Icons.cloud_rounded,
                         label: 'Config',
-                        value: fuseState.config!.name,
+                        value: fuseState.config.name,
                         onPressed: () => selectConfigDialog(context),
                       ),
                     const Divider(),

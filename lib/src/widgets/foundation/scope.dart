@@ -1,3 +1,5 @@
+import 'dart:developer' as developer;
+
 import 'package:flutter/material.dart';
 
 import '../../controller/controller.dart';
@@ -12,9 +14,9 @@ class AppFuseScope extends StatefulWidget {
     required this.app,
     super.key,
     this.placeholder = const SizedBox.shrink(),
-    this.initTimeout = const Duration(minutes: 8),
+    this.initTimeout = const Duration(minutes: 3),
     this.storage,
-    this.dependencies,
+    this.setup,
     this.configs,
     this.themes,
     this.supportedLanguages,
@@ -34,12 +36,11 @@ class AppFuseScope extends StatefulWidget {
   /// The maximum duration allowed for the entire initialization process.
   final Duration initTimeout;
 
-  /// The storage implementation for persisting settings.
-  /// Defaults to [$SharedPreferencesStorage].
+  /// The storage implementation for persisting settings. Defaults to [FuseShPrStorage].
   final IFuseStorage? storage;
 
   /// The class that defines the asynchronous initialization steps.
-  final AppFuseInitialization? dependencies;
+  final AppFuseSetup? setup;
 
   /// A list of available environment configurations for the app.
   final List<BaseConfig>? configs;
@@ -74,16 +75,16 @@ class AppFuseScope extends StatefulWidget {
       _InheritedAppFuseScope.of(context, listen: false).controller;
 
   /// Retrieves the current [AppFuseState] from the nearest [AppFuseScope].
+  static AppFuseState of(BuildContext context, {bool listen = false}) =>
+      _InheritedAppFuseScope.of(context, listen: listen).state;
+
+  /// Retrieves the current [AppFuseState] from the nearest [AppFuseScope].
   /// Does not cause the widget to rebuild when the state changes.
   static AppFuseState read(BuildContext context) => _InheritedAppFuseScope.of(context, listen: false).state;
 
   /// Subscribes to the [AppFuseState] from the nearest [AppFuseScope].
   /// Causes the widget to rebuild when the state changes.
   static AppFuseState watch(BuildContext context) => _InheritedAppFuseScope.of(context, listen: true).state;
-
-  /// Retrieves the initialized dependencies object of type [T].
-  static T getDependencies<T extends AppFuseInitialization>(BuildContext context, {bool listen = false}) =>
-      _InheritedAppFuseScope.of(context, listen: listen).state.dependencies as T;
 }
 
 class _AppFuseScopeState extends State<AppFuseScope> {
@@ -93,15 +94,16 @@ class _AppFuseScopeState extends State<AppFuseScope> {
   void initState() {
     super.initState();
     _controller = AppFuseController(
-      initData: widget.dependencies,
+      setup: widget.setup,
       initTimeout: widget.initTimeout,
       storage: widget.storage,
       configs: widget.configs,
       supportedLanguages: widget.supportedLanguages,
       localizationsDelegates: widget.localizationsDelegates,
       themes: widget.themes,
-      onProgress: widget.onProgress,
-      onError: widget.onError,
+      onProgress: widget.onProgress ?? (m) => developer.log(m, name: 'app-fuse', time: DateTime.now()),
+      onError: widget.onError ??
+          (e, s) => developer.log('$e', name: 'app-fuse', time: DateTime.now(), error: e, stackTrace: s),
     );
   }
 
@@ -128,9 +130,9 @@ class _AppFuseScopeState extends State<AppFuseScope> {
   Widget build(BuildContext context) => ValueListenableBuilder<AppFuseState>(
         valueListenable: _controller,
         builder: (context, state, _) {
-          if (state.isInitializing) {
+          if (state.isProcessing) {
             return VitalApp(
-              home: widget.progressBuilder?.call(state.initProgressMessage ?? '') ?? widget.placeholder,
+              home: widget.progressBuilder?.call(state.progressMessage ?? '') ?? widget.placeholder,
             );
           }
 
@@ -145,37 +147,36 @@ class _AppFuseScopeState extends State<AppFuseScope> {
           }
 
           final currentConfig = state.config;
-          if (currentConfig != null) {
-            _key = _getKey(currentConfig);
-
-            return VitalApp(
-              key: _key,
-              home: Stack(
-                children: [
-                  _InheritedAppFuseScope(
-                    state: state,
-                    controller: _controller,
-                    child: widget.app,
-                  ),
-                  if (currentConfig.showBanner)
-                    Align(
-                      alignment: Alignment.topLeft,
-                      child: ConfigBanner(
-                        name: currentConfig.name,
-                        color: currentConfig.color,
-                        onPressed: () {},
-                        onLongPressed: () {},
-                      ),
-                    ),
-                ],
-              ),
+          if (currentConfig is EmptyConfig) {
+            return _InheritedAppFuseScope(
+              controller: _controller,
+              state: state,
+              child: widget.app,
             );
           }
 
-          return _InheritedAppFuseScope(
-            controller: _controller,
-            state: state,
-            child: widget.app,
+          _key = _getKey(currentConfig);
+          return VitalApp(
+            key: _key,
+            home: Stack(
+              children: [
+                _InheritedAppFuseScope(
+                  state: state,
+                  controller: _controller,
+                  child: widget.app,
+                ),
+                if (currentConfig.showBanner)
+                  Align(
+                    alignment: Alignment.topLeft,
+                    child: ConfigBanner(
+                      name: currentConfig.name,
+                      color: currentConfig.color,
+                      onPressed: () {},
+                      onLongPressed: () {},
+                    ),
+                  ),
+              ],
+            ),
           );
         },
       );
@@ -226,7 +227,7 @@ extension $AppFuseContext on BuildContext {
   AppFuseState get watchSettings => AppFuseScope.watch(this);
 
   /// The currently active [Locale].
-  Locale get currentLocale => AppFuseScope.watch(this).locale;
+  Locale get currentLocale => watchSettings.locale;
 
   /// The language tag for the current locale (e.g., "en-US").
   String get currentLanguage => currentLocale.toLanguageTag();
@@ -254,7 +255,7 @@ extension $AppFuseContext on BuildContext {
   }
 
   /// The currently active [ThemeMode].
-  ThemeMode get currentThemeMode => AppFuseScope.watch(this).themeMode;
+  ThemeMode get currentThemeMode => watchSettings.themeMode;
 
   /// The name of the current theme mode (e.g., "dark").
   String get currentThemeModeName => currentThemeMode.name;

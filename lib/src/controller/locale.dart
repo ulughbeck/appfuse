@@ -7,24 +7,24 @@ extension $LocaleSetttings on AppFuseController {
   Iterable<Locale> get supportedLocales => _supportedLanguages.keys;
 
   /// Changes the application's active locale and persists the choice.
-  Future<void> changeLocale([Locale? newLocale]) async {
-    var locale = newLocale;
+  Future<void> changeLocale([Locale? newLocale]) => handle<void>(() async {
+        var locale = newLocale;
 
-    locale ??= await _loadSavedLocale();
-    locale ??= await _getDeviceLocale();
+        locale ??= await _loadSavedLocale();
+        locale ??= await _getDeviceLocale();
 
-    if (!isLocaleSupported(locale!)) {
-      locale = await _loadSavedLocale();
-      locale ??= supportedLocales.first;
-    }
+        if (!_isLocaleSupported(locale!)) {
+          locale = await _loadSavedLocale();
+          locale ??= supportedLocales.first;
+        }
 
-    setState(state.copyWith(locale: locale));
+        setState(state.copyWith(locale: locale));
 
-    _storage!.setValue<String>(_kLocaleSelected, locale.toString()).ignore();
-  }
+        _fuseStorage!.setValue<String>(_kLocaleSelected, locale.toString()).ignore();
+      });
 
   /// Checks if the given [locale] is present in the list of supported locales.
-  bool isLocaleSupported(Locale locale) => supportedLocales.contains(locale);
+  bool _isLocaleSupported(Locale locale) => supportedLocales.contains(locale);
 
   /// Retrieves the device's current system locale.
   Future<Locale?> _getDeviceLocale() async {
@@ -34,7 +34,7 @@ extension $LocaleSetttings on AppFuseController {
 
   /// Retrieves the saved locale from storage.
   Future<Locale?> _loadSavedLocale() async {
-    final localeStr = await _storage!.getValue<String>(_kLocaleSelected);
+    final localeStr = await _fuseStorage!.getValue<String>(_kLocaleSelected);
     if (localeStr != null) return _localeFromString(localeStr);
     return null;
   }

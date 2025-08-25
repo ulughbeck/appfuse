@@ -109,18 +109,19 @@ class AppMetaData {
   }
 
   @override
-  int get hashCode =>
-      isWeb.hashCode ^
-      isRelease.hashCode ^
-      isFirstLaunch.hashCode ^
-      appVersion.hashCode ^
-      appBuildNumber.hashCode ^
-      appPackageName.hashCode ^
-      appName.hashCode ^
-      operatingSystem.hashCode ^
-      processorsCount.hashCode ^
-      systemLocale.hashCode ^
-      deviceVersion.hashCode ^
-      appLaunchedTimestamp.hashCode ^
-      appFirstLaunchTimestamp.hashCode;
+  int get hashCode => Object.hash(
+        isWeb,
+        isRelease,
+        isFirstLaunch,
+        appVersion,
+        appBuildNumber,
+        appPackageName,
+        appName,
+        operatingSystem,
+        processorsCount,
+        systemLocale,
+        deviceVersion,
+        appLaunchedTimestamp,
+        appFirstLaunchTimestamp,
+      );
 }

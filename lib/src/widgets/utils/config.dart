@@ -8,7 +8,7 @@ Future<void> selectConfigDialog(
   final configs = context.fuse.state.configs;
   final selectedConfig = context.fuse.state.config;
   if (configs == null) return;
-  if (selectedConfig == null) return;
+  if (selectedConfig is EmptyConfig) return;
 
   return showDialog<void>(
     context: context,

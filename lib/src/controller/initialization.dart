@@ -6,38 +6,34 @@ extension $Initialization on AppFuseController {
   /// Kicks off the entire application initialization process.
   Future<void> _initialiseApp() async {
     try {
+      setState(state.startProcessing());
       setState(state.copyWith(
-        isInitializing: true,
         supportedLocales: supportedLocales,
         localizationsDelegates: _localizationsDelegates,
       ));
-      final initData = _initData;
 
       final dependencies = await _initialize(
-        initData: initData,
+        setup: _setupSteps,
         configs: _configs,
-        onProgress: onProgress,
-        onError: onError,
       ).timeout(initTimeout);
 
       setState(state.copyWith(
-        isInitializing: false,
         dependencies: dependencies,
       ));
     } on Object catch (error, stackTrace) {
       _onError(error, stackTrace);
       rethrow;
+    } finally {
+      setState(state.stopProcessing());
     }
   }
 
   /// Initializes the app and prepares it for use.
-  Future<AppFuseInitialization> _initialize({
-    required AppFuseInitialization initData,
+  Future<AppFuseSetup> _initialize({
+    required AppFuseSetup setup,
     required List<BaseConfig> configs,
-    void Function(String message)? onProgress,
-    void Function(Object error, StackTrace stackTrace)? onError,
   }) =>
-      _$currentInitialization ??= Future<AppFuseInitialization>(() async {
+      _$currentInitialization ??= Future<AppFuseSetup>(() async {
         late final WidgetsBinding binding;
         final stopwatch = Stopwatch()..start();
 
@@ -46,47 +42,47 @@ extension $Initialization on AppFuseController {
           await _catchExceptions();
 
           final initializationSteps = <String, InitializationStep>{
-            if (_storage == null)
-              'Initialize Fuse Storage': (_) async {
-                _storage = await $SharedPreferencesStorage.getInstance();
+            if (_fuseStorage == null)
+              'initialize FuseStorage': (_, __) async {
+                _fuseStorage = await FuseShPrStorage.init();
               },
-            'Fetch Meta Data': (_) async {
+            'fetch meta data': (_, __) async {
               await _fetchAppMetaData();
             },
-            'Check Permissions': (_) async {
-              await _checkPermissions();
+            'fetch and activate environment config': (_, __) async {
+              if (configs.isNotEmpty) {
+                await _fetchSavedConfig(configs);
+              } else {
+                setState(state.copyWith(config: EmptyConfig()));
+              }
             },
-            'Fetch Saved Settings': (_) async {
+            'fetch saved settings': (_, __) async {
               await _fetchSavedSettings();
             },
-            if (configs.isNotEmpty)
-              'Fetch and Activate Environment Config': (_) async {
-                await _fetchSavedConfig(configs);
-              },
-          }..addAll(initData.initialisationSteps);
+          }..addAll(setup.steps);
 
-          _onProgress('Initialization started');
+          _onProgress('initialization started');
           final totalSteps = initializationSteps.length;
           var currentStep = 0;
           for (final step in initializationSteps.entries) {
             try {
               currentStep++;
               final percent = (currentStep * 100 ~/ totalSteps).clamp(0, 100);
-              _onProgress('Initialization | $currentStep/$totalSteps ($percent%) | "${step.key}"');
-              await step.value(initData);
+              _onProgress('initialization | $currentStep/$totalSteps ($percent%) | "${step.key}"');
+              await step.value(state.config, setup);
             } on Object catch (error, stackTrace) {
-              _onError('Initialization failed at step "${step.key}": $error', stackTrace);
-              Error.throwWithStackTrace('Initialization failed at step "${step.key}": $error', stackTrace);
+              _onError('initialization failed at step "${step.key}": $error', stackTrace);
+              Error.throwWithStackTrace('initialization failed at step "${step.key}": $error', stackTrace);
             }
           }
 
-          return initData;
+          return setup;
         } on Object catch (error, stackTrace) {
-          _onError('Failed to initialize app: $error', stackTrace);
+          _onError('failed to initialize app: $error', stackTrace);
           rethrow;
         } finally {
           stopwatch.stop();
-          _onProgress('Initialization finished in ${stopwatch.elapsed}');
+          _onProgress('initialization finished in ${stopwatch.elapsed}');
 
           binding.addPostFrameCallback((_) {
             // Closes splash screen, and show the app layout.
@@ -99,7 +95,7 @@ extension $Initialization on AppFuseController {
 
   /// Loads saved user preferences like theme, locale, and custom settings from storage.
   Future<void> _fetchSavedSettings() async {
-    final customSettings = await _storage!.getValue<Map<String, Object?>>(_kCustomSettings);
+    final customSettings = await _fuseStorage!.getValue<Map<String, Object?>>(_kCustomSettings);
     await changeLocale();
     await changeThemeMode();
 
@@ -110,13 +106,22 @@ extension $Initialization on AppFuseController {
     ));
   }
 
+  /// Loads and activates the previously saved or default configuration.
+  Future<void> _fetchSavedConfig(List<BaseConfig> configs) async {
+    final name = await _fuseStorage!.getValue<String>(_kConfigSelected);
+    final iterator = configs.where((config) => config.name == name);
+    final enabledConfig = iterator.isNotEmpty ? iterator.first : configs.first;
+    final configLoaded = await enabledConfig.init();
+    setState(state.copyWith(configs: configs, config: configLoaded));
+  }
+
   /// Gathers and stores application and device metadata.
   Future<void> _fetchAppMetaData() async {
     final info = await PackageInfo.fromPlatform();
 
-    final appFirstLaunchTimestamp = await _storage!.getValue<DateTime>(_kFirstLaunchTimeStamp);
+    final appFirstLaunchTimestamp = await _fuseStorage!.getValue<DateTime>(_kFirstLaunchTimeStamp);
     final isFirstLaunch = appFirstLaunchTimestamp == null;
-    if (isFirstLaunch) _storage!.setValue<DateTime>(_kFirstLaunchTimeStamp, DateTime.now()).ignore();
+    if (isFirstLaunch) _fuseStorage!.setValue<DateTime>(_kFirstLaunchTimeStamp, DateTime.now()).ignore();
 
     final metaData = AppMetaData(
       isWeb: platform.js,
@@ -137,33 +142,18 @@ extension $Initialization on AppFuseController {
     setState(state.copyWith(metaData: metaData));
   }
 
-  /// Reports a progress message to the state and the onProgress callback.
-  void _onProgress(String message) {
-    setState(state.copyWith(initProgressMessage: message));
-    onProgress?.call(message);
-  }
-
-  /// Updates the state with error information and calls the onError callback.
-  void _onError(Object error, StackTrace stackTrace) {
-    setState(state.copyWith(
-      isInitializing: false,
-      error: error,
-      stackTrace: stackTrace,
-    ));
-    onError?.call(error, stackTrace);
-  }
-
   /// Sets up global error handlers to catch and log uncaught exceptions.
   Future<void> _catchExceptions() async {
     try {
       PlatformDispatcher.instance.onError = (error, stackTrace) {
-        log('$error', error: error, stackTrace: stackTrace, name: 'ROOT ERROR\r\n${Error.safeToString(error)}');
+        developer.log('$error',
+            error: error, stackTrace: stackTrace, name: 'ROOT ERROR\r\n${Error.safeToString(error)}');
         return true;
       };
 
       final sourceFlutterError = FlutterError.onError;
       FlutterError.onError = (final details) {
-        log(
+        developer.log(
           '${details.exception}',
           error: details.exception,
           stackTrace: details.stack ?? StackTrace.current,
@@ -172,7 +162,7 @@ extension $Initialization on AppFuseController {
         sourceFlutterError?.call(details);
       };
     } on Object catch (error, stackTrace) {
-      log('$error', error: error, stackTrace: stackTrace);
+      developer.log('$error', error: error, stackTrace: stackTrace);
     }
   }
 }

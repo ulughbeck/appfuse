@@ -9,55 +9,21 @@ void main() {
   runApp(
     AppFuseScope(
       // The list of environment configurations your app can use.
-      configs: configs,
+      configs: App.configs,
       // A map of themes for light/dark mode.
-      themes: themes,
+      themes: App.themes,
       // A map of supported languages for localization.
-      supportedLanguages: appLanguages,
+      supportedLanguages: App.supportedLanguages,
       // Your app's localization delegates.
-      localizationsDelegates: localizationsDelegates,
+      localizationsDelegates: App.localizationsDelegates,
       // The class that defines your app's asynchronous initialization steps.
-      dependencies: Dependencies(),
+      setup: Dependencies(),
       // A widget to show while dependencies are being initialized.
       placeholder: const SplashScreen(),
       // The main widget of your app, displayed after initialization is complete.
       app: const App(),
     ),
   );
-}
-
-// Mock classes for the example.
-class A {}
-
-class B {}
-
-/// Define your app's dependencies and their initialization logic.
-/// This class uses the `AppFuseInitialization` mixin to hook into the startup process.
-class Dependencies with AppFuseInitialization {
-  Dependencies();
-
-  /// A static helper method for easy access to your dependencies from anywhere
-  /// in the widget tree.
-  static Dependencies of(BuildContext context) => AppFuseScope.getDependencies<Dependencies>(context, listen: false);
-
-  // Define late final variables for your services, repositories, etc.
-  late final A dependencyA;
-  late final B dependencyB;
-
-  /// Define the asynchronous steps required to initialize your app.
-  /// Each key is a descriptive name for the step, which is useful for logging.
-  @override
-  Map<String, InitializationStep> get initialisationSteps => {
-        'initialize dependency A': (dependencies) async {
-          // Perform async work like opening a database or initializing a service.
-          await Future.delayed(const Duration(seconds: 1));
-          dependencyA = A();
-        },
-        'initialize dependency B': (dependencies) async {
-          await Future.delayed(const Duration(seconds: 1));
-          dependencyB = B();
-        },
-      };
 }
 
 /// Create a base configuration class for your app.
@@ -79,38 +45,76 @@ class TestConfig extends AppConfig {
   TestConfig() : super(name: 'test', path: 'config/test.json', color: Colors.red);
 }
 
-// Define your environment configurations, app's themes and languages.
+// Mock classes for the example.
+class A {}
 
-/// AppFuse will automatically load the last used config or the first in the list.
-final configs = [TestConfig(), ProdConfig()];
+class B {}
 
-/// The `themes` map defines the `ThemeData` for different brightness levels.
-/// AppFuse uses this to automatically switch between light and dark themes.
-/// You must provide at least a `Brightness.light` theme.
-final themes = <Brightness, ThemeData>{Brightness.light: ThemeData.light()};
+/// Define your app's dependencies and their initialization logic.
+/// This class uses the `AppFuseInitialization` mixin to hook into the startup process.
+class Dependencies with AppFuseSetup {
+  Dependencies();
 
-/// The `appLanguages` map connects a `Locale` object to its human-readable name.
-/// This is used to build a language selector UI. The key is the `Locale`
-/// that Flutter uses, and the value is the string you would display to the user.
-final appLanguages = <Locale, String>{const Locale('en'): 'English'};
+  /// A static helper method for easy access to your dependencies from anywhere
+  /// in the widget tree.
+  static Dependencies of(BuildContext context) => AppFuseScope.of(context, listen: false).setup as Dependencies;
 
-/// The `localizationsDelegates` list is a standard Flutter concept.
-/// It contains the delegates needed to load translated strings and format dates/numbers
-/// for the current locale. AppFuse passes this list directly to the `MaterialApp`.
-/// You typically get this list from packages like `flutter_localizations`.
-const localizationsDelegates = <LocalizationsDelegate<dynamic>>[];
+  // Define late final variables for your services, repositories, etc.
+  late final A dependencyA;
+  late final B dependencyB;
 
-// APP WIDGETS
+  /// Define the asynchronous steps required to initialize your app.
+  /// Each key is a descriptive name for the step, which is useful for logging.
+  @override
+  Map<String, InitializationStep> get steps => {
+        'initialize dependency A': (config, self) async {
+          // Perform async work like opening a database or initializing a service.
+          await Future.delayed(const Duration(seconds: 1));
+          dependencyA = A();
+        },
+        'initialize dependency B': (config, self) async {
+          final c = config as AppConfig;
+          c.appName;
+          final d = self as Dependencies;
+          d.dependencyA;
+
+          await Future.delayed(const Duration(seconds: 1));
+          dependencyB = B();
+        },
+      };
+}
 
 /// The root widget of your application.
 class App extends StatelessWidget {
+  // Define your environment configurations, app's themes and languages.
+
+  /// AppFuse will automatically load the last used config or the first in the list.
+  static final configs = [TestConfig(), ProdConfig()];
+
+  /// The `themes` map defines the `ThemeData` for different brightness levels.
+  /// AppFuse uses this to automatically switch between light and dark themes.
+  /// You must provide at least a `Brightness.light` theme.
+  static final themes = <Brightness, ThemeData>{Brightness.light: ThemeData.light()};
+
+  /// The `appLanguages` map connects a `Locale` object to its human-readable name.
+  /// This is used to build a language selector UI. The key is the `Locale`
+  /// that Flutter uses, and the value is the string you would display to the user.
+  static final supportedLanguages = <Locale, String>{const Locale('en'): 'English'};
+
+  /// The `localizationsDelegates` list is a standard Flutter concept.
+  /// It contains the delegates needed to load translated strings and format dates/numbers
+  /// for the current locale. AppFuse passes this list directly to the `MaterialApp`.
+  /// You typically get this list from packages like `flutter_localizations`.
+  static const localizationsDelegates = <LocalizationsDelegate<dynamic>>[];
+
   const App({super.key});
+
   @override
   Widget build(BuildContext context) => MaterialApp(
         // Use the context extensions to get state from AppFuse.
         // `watchSettings` rebuilds the widget when the value changes.
         // `readSettings` gets the value once without subscribing to changes.
-        locale: context.watchSettings.locale,
+        locale: context.currentLocale,
         supportedLocales: context.readSettings.supportedLocales,
         localizationsDelegates: context.readSettings.localizationsDelegates,
         themeMode: context.watchSettings.themeMode,

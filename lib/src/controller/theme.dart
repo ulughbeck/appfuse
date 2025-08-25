@@ -4,24 +4,24 @@ const _kThemeModeSelected = 'appfuse.settings.themeMode';
 
 extension $ThemeModeSettings on AppFuseController {
   /// Changes the application's active theme mode and persists the choice.
-  Future<void> changeThemeMode([ThemeMode? newMode]) async {
-    var mode = newMode;
+  Future<void> changeThemeMode([ThemeMode? newMode]) => handle<void>(() async {
+        var mode = newMode;
 
-    mode ??= await _loadSavedThemeMode();
+        mode ??= await _loadSavedThemeMode();
 
-    if (!isThemeModeSupported(mode)) {
-      mode = await _loadSavedThemeMode();
-      mode ??= ThemeMode.system;
-    }
+        if (!_isThemeModeSupported(mode)) {
+          mode = await _loadSavedThemeMode();
+          mode ??= ThemeMode.system;
+        }
 
-    setState(state.copyWith(themeMode: mode));
+        setState(state.copyWith(themeMode: mode));
 
-    /// saves [ThemeMode] preference
-    _storage!.setValue<String>(_kThemeModeSelected, mode!.name).ignore();
-  }
+        /// saves [ThemeMode] preference
+        _fuseStorage!.setValue<String>(_kThemeModeSelected, mode!.name).ignore();
+      });
 
   /// Checks if the given [ThemeMode] is present in the list of supported locales.
-  bool isThemeModeSupported(ThemeMode? mode) {
+  bool _isThemeModeSupported(ThemeMode? mode) {
     if (mode == null) return false;
     switch (mode) {
       case ThemeMode.light:
@@ -35,7 +35,7 @@ extension $ThemeModeSettings on AppFuseController {
 
   /// Retrieves the saved theme mode from storage.
   Future<ThemeMode?> _loadSavedThemeMode() async {
-    final localeStr = await _storage!.getValue<String>(_kThemeModeSelected);
+    final localeStr = await _fuseStorage!.getValue<String>(_kThemeModeSelected);
     if (localeStr != null) return _themeModeFromString(localeStr);
     return null;
   }

@@ -5,34 +5,32 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// An interface for a simple key-value storage system.
 abstract interface class IFuseStorage {
   Future<bool> setValue<T>(String key, T value);
-
   Future<T?> getValue<T>(String key);
 }
 
 /// A default storage implementation using the `shared_preferences` package.
-class $SharedPreferencesStorage implements IFuseStorage {
-  $SharedPreferencesStorage._();
-
-  static Future<$SharedPreferencesStorage> getInstance() async {
-    _prefs = await SharedPreferences.getInstance();
-    return $SharedPreferencesStorage._();
-  }
+class FuseShPrStorage implements IFuseStorage {
+  FuseShPrStorage._();
 
   static late SharedPreferences _prefs;
+
+  static Future<FuseShPrStorage> init() async {
+    _prefs = await SharedPreferences.getInstance();
+    return FuseShPrStorage._();
+  }
 
   @override
   Future<T?> getValue<T>(String key) async {
     final value = _prefs.get(key);
 
     if (value == null) return null;
-
     return switch (value) {
       bool b when T == bool => b as T,
       int i when T == int => i as T,
       double d when T == double => d as T,
       String s when T == String => s as T,
       String dt when T == DateTime => DateTime.parse(dt) as T,
-      String m when T.toString() == 'Map<String, Object?>' => jsonDecode(m) as T,
+      String m when T == Map => jsonDecode(m) as T,
       List<String> list when T == (List<String>) => list as T,
       _ => throw UnsupportedError('Type $T is not supported by SharedPreferencesStorage'),
     };
