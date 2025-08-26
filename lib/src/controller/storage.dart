@@ -31,6 +31,8 @@ class FuseShPrStorage implements IFuseStorage {
       String s when T == String => s as T,
       String dt when T == DateTime => DateTime.parse(dt) as T,
       String m when T == Map => jsonDecode(m) as T,
+      String m when T == (Map<String, Object?>) => jsonDecode(m) as T,
+      String m when T == (Map<String, dynamic>) => jsonDecode(m) as T,
       List<String> list when T == (List<String>) => list as T,
       _ => throw UnsupportedError('Type $T is not supported by SharedPreferencesStorage'),
     };

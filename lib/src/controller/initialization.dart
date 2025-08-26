@@ -43,20 +43,20 @@ extension $Initialization on AppFuseController {
 
           final initializationSteps = <String, InitializationStep>{
             if (_fuseStorage == null)
-              'initialize FuseStorage': (_, __) async {
+              'initialize FuseStorage': (_) async {
                 _fuseStorage = await FuseShPrStorage.init();
               },
-            'fetch meta data': (_, __) async {
+            'fetch meta data': (_) async {
               await _fetchAppMetaData();
             },
-            'fetch and activate environment config': (_, __) async {
+            'fetch and activate environment config': (_) async {
               if (configs.isNotEmpty) {
                 await _fetchSavedConfig(configs);
               } else {
                 setState(state.copyWith(config: EmptyConfig()));
               }
             },
-            'fetch saved settings': (_, __) async {
+            'fetch saved settings': (_) async {
               await _fetchSavedSettings();
             },
           }..addAll(setup.steps);
@@ -69,7 +69,7 @@ extension $Initialization on AppFuseController {
               currentStep++;
               final percent = (currentStep * 100 ~/ totalSteps).clamp(0, 100);
               _onProgress('initialization | $currentStep/$totalSteps ($percent%) | "${step.key}"');
-              await step.value(state.config, setup);
+              await step.value(state);
             } on Object catch (error, stackTrace) {
               _onError('initialization failed at step "${step.key}": $error', stackTrace);
               Error.throwWithStackTrace('initialization failed at step "${step.key}": $error', stackTrace);

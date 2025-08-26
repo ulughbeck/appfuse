@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:appfuse/appfuse.dart';
 
 /// A type definition for a single step in the app's initialization process.
-typedef InitializationStep = Future<void> Function(BaseConfig config, AppFuseSetup self);
+typedef InitializationStep = Future<void> Function(AppFuseState state);
 
 /// A mixin that defines the contract for providing app initialization steps.
 ///

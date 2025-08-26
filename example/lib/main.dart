@@ -67,15 +67,15 @@ class Dependencies with AppFuseSetup {
   /// Each key is a descriptive name for the step, which is useful for logging.
   @override
   Map<String, InitializationStep> get steps => {
-        'initialize dependency A': (config, self) async {
+        'initialize dependency A': (state) async {
           // Perform async work like opening a database or initializing a service.
           await Future.delayed(const Duration(seconds: 1));
           dependencyA = A();
         },
-        'initialize dependency B': (config, self) async {
-          final c = config as AppConfig;
+        'initialize dependency B': (state) async {
+          final c = state.config as AppConfig;
           c.appName;
-          final d = self as Dependencies;
+          final d = state.setup as Dependencies;
           d.dependencyA;
 
           await Future.delayed(const Duration(seconds: 1));
