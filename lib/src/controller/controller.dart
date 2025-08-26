@@ -204,7 +204,7 @@ class AppFuseState {
   bool get hasError => error != null;
 
   AppFuseState copyWith({
-    AppFuseSetup? dependencies,
+    AppFuseSetup? setup,
     BaseConfig? config,
     List<BaseConfig>? configs,
     Map<String, Object?>? customSettings,
@@ -222,7 +222,7 @@ class AppFuseState {
     StackTrace? stackTrace,
   }) =>
       AppFuseState(
-        setup: dependencies ?? setup,
+        setup: setup ?? this.setup,
         config: config ?? this.config,
         configs: configs ?? this.configs,
         customSettings: customSettings ?? this.customSettings,

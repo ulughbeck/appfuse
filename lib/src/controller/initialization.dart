@@ -7,19 +7,14 @@ extension $Initialization on AppFuseController {
   Future<void> _initialiseApp() async {
     try {
       setState(state.startProcessing());
-      setState(state.copyWith(
-        supportedLocales: supportedLocales,
-        localizationsDelegates: _localizationsDelegates,
-      ));
+      setState(state.copyWith(setup: _setupSteps));
 
-      final dependencies = await _initialize(
+      final setup = await _initialize(
         setup: _setupSteps,
         configs: _configs,
       ).timeout(initTimeout);
 
-      setState(state.copyWith(
-        dependencies: dependencies,
-      ));
+      setState(state.copyWith(setup: setup));
     } on Object catch (error, stackTrace) {
       _onError(error, stackTrace);
       rethrow;
@@ -103,6 +98,8 @@ extension $Initialization on AppFuseController {
       customSettings: customSettings,
       lightTheme: _themes[Brightness.light] ?? ThemeData.light(),
       darkTheme: _themes[Brightness.dark],
+      supportedLocales: supportedLocales,
+      localizationsDelegates: _localizationsDelegates,
     ));
   }
 
