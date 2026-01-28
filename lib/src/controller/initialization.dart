@@ -24,11 +24,11 @@ extension $Initialization on AppFuseController {
   }
 
   /// Initializes the app and prepares it for use.
-  Future<AppFuseSetup> _initialize({
-    required AppFuseSetup setup,
+  Future<AppFuseInitialization> _initialize({
+    required AppFuseInitialization setup,
     required List<BaseConfig> configs,
   }) =>
-      _$currentInitialization ??= Future<AppFuseSetup>(() async {
+      _$currentInitialization ??= Future<AppFuseInitialization>(() async {
         late final WidgetsBinding binding;
         final stopwatch = Stopwatch()..start();
 
@@ -38,8 +38,8 @@ extension $Initialization on AppFuseController {
 
           final initializationSteps = <String, InitializationStep>{
             if (_fuseStorage == null)
-              'initialize FuseStorage': (_) async {
-                _fuseStorage = await FuseShPrStorage.init();
+              'initialize AppFuseStorage': (_) async {
+                _fuseStorage = await AppFuseShPrStorage.init();
               },
             'fetch meta data': (_) async {
               await _fetchAppMetaData();
@@ -48,7 +48,7 @@ extension $Initialization on AppFuseController {
               if (configs.isNotEmpty) {
                 await _fetchSavedConfig(configs);
               } else {
-                setState(state.copyWith(config: EmptyConfig()));
+                setState(state.copyWith(config: const EmptyConfig()));
               }
             },
             'fetch saved settings': (_) async {

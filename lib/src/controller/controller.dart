@@ -89,12 +89,12 @@ class AppFuseController extends IController<AppFuseState> {
     this.initTimeout = const Duration(minutes: 3),
     this.onProgress,
     this.onError,
-    AppFuseSetup? setup,
+    AppFuseInitialization? setup,
     List<BaseConfig>? configs,
     Map<Brightness, ThemeData>? themes,
     Map<Locale, String>? supportedLanguages,
     Iterable<LocalizationsDelegate<dynamic>>? localizationsDelegates,
-    IFuseStorage? storage,
+    IAppFuseStorage? storage,
   })  : _fuseStorage = storage,
         _setupSteps = setup ?? EmptyInitialization(),
         _configs = configs ?? const [],
@@ -110,16 +110,16 @@ class AppFuseController extends IController<AppFuseState> {
   final void Function(Object error, StackTrace stackTrace)? onError;
 
   final List<BaseConfig> _configs;
-  final AppFuseSetup _setupSteps;
+  final AppFuseInitialization _setupSteps;
   final Map<Brightness, ThemeData> _themes;
   final Map<Locale, String> _supportedLanguages;
   final Iterable<LocalizationsDelegate<dynamic>> _localizationsDelegates;
 
   /// Fuse Settings Storage
-  IFuseStorage? _fuseStorage;
+  IAppFuseStorage? _fuseStorage;
 
   /// Ephemerally initializes the app and prepares it for use.
-  Future<AppFuseSetup>? _$currentInitialization;
+  Future<AppFuseInitialization>? _$currentInitialization;
 
   /// Reports a progress message to the state and the onProgress callback.
   void _onProgress(String message) {
@@ -144,7 +144,7 @@ class AppFuseState {
   const AppFuseState({
     required this.metaData,
     required this.lightTheme,
-    this.setup,
+    this.init,
     this.config = const EmptyConfig(),
     this.configs,
     this.permissions = const <Permission, PermissionStatus>{},
@@ -169,7 +169,7 @@ class AppFuseState {
   AppFuseState startProcessing() => copyWith(isProcessing: true);
   AppFuseState stopProcessing() => copyWith(isProcessing: false);
 
-  final AppFuseSetup? setup;
+  final AppFuseInitialization? init;
 
   final BaseConfig config;
   final List<BaseConfig>? configs;
@@ -204,7 +204,7 @@ class AppFuseState {
   bool get hasError => error != null;
 
   AppFuseState copyWith({
-    AppFuseSetup? setup,
+    AppFuseInitialization? setup,
     BaseConfig? config,
     List<BaseConfig>? configs,
     Map<String, Object?>? customSettings,
@@ -222,7 +222,7 @@ class AppFuseState {
     StackTrace? stackTrace,
   }) =>
       AppFuseState(
-        setup: setup ?? this.setup,
+        init: setup ?? init,
         config: config ?? this.config,
         configs: configs ?? this.configs,
         customSettings: customSettings ?? this.customSettings,
@@ -244,7 +244,7 @@ class AppFuseState {
   bool operator ==(covariant AppFuseState other) {
     if (identical(this, other)) return true;
 
-    return other.setup == setup &&
+    return other.init == init &&
         other.config == config &&
         listEquals(other.configs, configs) &&
         other.metaData == metaData &&
@@ -264,7 +264,7 @@ class AppFuseState {
 
   @override
   int get hashCode => Object.hash(
-        setup,
+        init,
         config,
         configs,
         metaData,

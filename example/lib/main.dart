@@ -17,7 +17,7 @@ void main() {
       // Your app's localization delegates.
       localizationsDelegates: App.localizationsDelegates,
       // The class that defines your app's asynchronous initialization steps.
-      setup: Dependencies(),
+      init: Dependencies(),
       // A widget to show while dependencies are being initialized.
       placeholder: const SplashScreen(),
       // The main widget of your app, displayed after initialization is complete.
@@ -52,12 +52,12 @@ class B {}
 
 /// Define your app's dependencies and their initialization logic.
 /// This class uses the `AppFuseInitialization` mixin to hook into the startup process.
-class Dependencies with AppFuseSetup {
+class Dependencies with AppFuseInitialization {
   Dependencies();
 
   /// A static helper method for easy access to your dependencies from anywhere
   /// in the widget tree.
-  static Dependencies of(BuildContext context) => AppFuseScope.of(context, listen: false).setup as Dependencies;
+  static Dependencies of(BuildContext context) => AppFuseScope.of(context, listen: false).init as Dependencies;
 
   // Define late final variables for your services, repositories, etc.
   late final A dependencyA;
@@ -75,7 +75,7 @@ class Dependencies with AppFuseSetup {
         'initialize dependency B': (state) async {
           final c = state.config as AppConfig;
           c.appName;
-          final d = state.setup as Dependencies;
+          final d = state.init as Dependencies;
           d.dependencyA;
 
           await Future.delayed(const Duration(seconds: 1));
@@ -115,11 +115,11 @@ class App extends StatelessWidget {
         // `watchSettings` rebuilds the widget when the value changes.
         // `readSettings` gets the value once without subscribing to changes.
         locale: context.currentLocale,
-        supportedLocales: context.readSettings.supportedLocales,
-        localizationsDelegates: context.readSettings.localizationsDelegates,
-        themeMode: context.watchSettings.themeMode,
-        theme: context.readSettings.lightTheme,
-        darkTheme: context.readSettings.darkTheme,
+        supportedLocales: context.readFuseState.supportedLocales,
+        localizationsDelegates: context.readFuseState.localizationsDelegates,
+        themeMode: context.watchFuseState.themeMode,
+        theme: context.readFuseState.lightTheme,
+        darkTheme: context.readFuseState.darkTheme,
         home: const HomeScreen(),
       );
 }
@@ -137,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     // Access any part of the AppFuse state.
     // Here, we read a custom setting that might have been saved.
-    final onBoardingComplete = context.readSettings.getCustomSetting<bool>('onboarding');
+    final onBoardingComplete = context.readFuseState.getCustomSetting<bool>('onboarding');
     print('Onboarding complete: $onBoardingComplete'); // if not found, prints null
 
     // You can also access your initialized dependencies anywhere.
@@ -149,7 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     // Get the current environment configuration and its values.
     // It's good practice to provide a default value in case the config is null.
-    final appName = context.readSettings.getCurrentConfig<AppConfig>()?.appName ?? 'No Name';
+    final appName = context.readFuseState.getCurrentConfig<AppConfig>()?.appName ?? 'No Name';
     return Scaffold(
       appBar: AppBar(title: Text(appName)),
       body: const Center(child: Text('Home Screen')),

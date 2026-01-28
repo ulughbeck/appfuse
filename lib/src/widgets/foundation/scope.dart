@@ -16,7 +16,7 @@ class AppFuseScope extends StatefulWidget {
     this.placeholder = const SizedBox.shrink(),
     this.initTimeout = const Duration(minutes: 3),
     this.storage,
-    this.setup,
+    this.init,
     this.configs,
     this.themes,
     this.supportedLanguages,
@@ -36,11 +36,11 @@ class AppFuseScope extends StatefulWidget {
   /// The maximum duration allowed for the entire initialization process.
   final Duration initTimeout;
 
-  /// The storage implementation for persisting settings. Defaults to [FuseShPrStorage].
-  final IFuseStorage? storage;
+  /// The storage implementation for persisting settings. Defaults to [AppFuseShPrStorage].
+  final IAppFuseStorage? storage;
 
   /// The class that defines the asynchronous initialization steps.
-  final AppFuseSetup? setup;
+  final AppFuseInitialization? init;
 
   /// A list of available environment configurations for the app.
   final List<BaseConfig>? configs;
@@ -94,7 +94,7 @@ class _AppFuseScopeState extends State<AppFuseScope> {
   void initState() {
     super.initState();
     _controller = AppFuseController(
-      setup: widget.setup,
+      setup: widget.init,
       initTimeout: widget.initTimeout,
       storage: widget.storage,
       configs: widget.configs,
@@ -221,13 +221,13 @@ extension $AppFuseContext on BuildContext {
   AppFuseController get fuse => AppFuseScope.controller(this);
 
   /// Shortcut for reading the current [AppFuseState] without listening for changes.
-  AppFuseState get readSettings => AppFuseScope.read(this);
+  AppFuseState get readFuseState => AppFuseScope.read(this);
 
   /// Shortcut for watching the current [AppFuseState] for changes.
-  AppFuseState get watchSettings => AppFuseScope.watch(this);
+  AppFuseState get watchFuseState => AppFuseScope.watch(this);
 
   /// The currently active [Locale].
-  Locale get currentLocale => watchSettings.locale;
+  Locale get currentLocale => watchFuseState.locale;
 
   /// The language tag for the current locale (e.g., "en-US").
   String get currentLanguage => currentLocale.toLanguageTag();
@@ -255,7 +255,7 @@ extension $AppFuseContext on BuildContext {
   }
 
   /// The currently active [ThemeMode].
-  ThemeMode get currentThemeMode => watchSettings.themeMode;
+  ThemeMode get currentThemeMode => watchFuseState.themeMode;
 
   /// The name of the current theme mode (e.g., "dark").
   String get currentThemeModeName => currentThemeMode.name;

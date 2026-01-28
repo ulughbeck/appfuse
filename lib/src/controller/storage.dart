@@ -3,20 +3,20 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// An interface for a simple key-value storage system.
-abstract interface class IFuseStorage {
+abstract interface class IAppFuseStorage {
   Future<bool> setValue<T>(String key, T value);
   Future<T?> getValue<T>(String key);
 }
 
 /// A default storage implementation using the `shared_preferences` package.
-class FuseShPrStorage implements IFuseStorage {
-  FuseShPrStorage._();
+class AppFuseShPrStorage implements IAppFuseStorage {
+  AppFuseShPrStorage._();
 
   static late SharedPreferences _prefs;
 
-  static Future<FuseShPrStorage> init() async {
+  static Future<AppFuseShPrStorage> init() async {
     _prefs = await SharedPreferences.getInstance();
-    return FuseShPrStorage._();
+    return AppFuseShPrStorage._();
   }
 
   @override

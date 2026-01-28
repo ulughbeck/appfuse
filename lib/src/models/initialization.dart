@@ -8,12 +8,12 @@ typedef InitializationStep = Future<void> Function(AppFuseState state);
 /// A mixin that defines the contract for providing app initialization steps.
 ///
 /// Classes using this mixin must implement [steps] to define their async setup logic.
-mixin AppFuseSetup {
+mixin AppFuseInitialization {
   Map<String, InitializationStep> get steps;
 }
 
-/// A default, empty implementation of [AppFuseSetup]
-class EmptyInitialization with AppFuseSetup {
+/// A default, empty implementation of [AppFuseInitialization]
+class EmptyInitialization with AppFuseInitialization {
   @override
   Map<String, InitializationStep> get steps => {};
 }

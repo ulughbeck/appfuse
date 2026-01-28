@@ -1,5 +1,27 @@
 name: appfuse
-description: DI + Config + Locale + Theme + Permissions
+description: orchestrator for Flutter apps
+
+homepage: https://github.com/ulughbeck/appfuse
+repository: https://github.com/ulughbeck/appfuse
+issue_tracker: https://github.com/ulughbeck/appfuse/issues
+
+topics:
+  - initialization
+  - environment
+  - DI
+  - config
+  - localization
+  - theme
+  - permissions
+  - settings
+
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  web:
+  windows:
 
 version: 0.0.1
 
@@ -11,14 +33,14 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  intl:
-  shared_preferences: ^2.5.3
-  package_info_plus: ^8.3.1
+  intl: ^0.20.2
+  shared_preferences: ^2.5.4
+  package_info_plus: ^9.0.0
   platform_info: ^5.0.0
   permission_handler: ^12.0.1
-  http: ^1.5.0
+  http: ^1.6.0
 
 dev_dependencies: 
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
