@@ -6,11 +6,11 @@ repository: https://github.com/ulughbeck/appfuse
 issue_tracker: https://github.com/ulughbeck/appfuse/issues
 
 topics:
+  - scope
   - settings
-  - config
-  - DI
-  - localization
-  - theme
+  - state-management
+  - dependency-injection
+  - appfuse
 
 platforms:
   android:
