@@ -4,8 +4,7 @@ import 'package:appfuse/appfuse.dart';
 import 'package:flutter/material.dart';
 
 void main() {
-  // Wrap your entire application with the AppFuseScope widget.
-  // This widget handles all the initialization and provides state to your app.
+  // AppFuseScope runs the initialization and provides the state to the app.
   runApp(
     AppFuseScope(
       // The list of environment configurations your app can use.
@@ -17,32 +16,56 @@ void main() {
       // Your app's localization delegates.
       localizationsDelegates: App.localizationsDelegates,
       // The class that defines your app's asynchronous initialization steps.
-      init: Dependencies(),
-      // A widget to show while dependencies are being initialized.
+      init: Dependencies.new,
+      // Shown during config switches and retries. The native splash stays
+      // until the startup ends. Set `keepNativeSplash: false` to show it at startup.
       placeholder: const SplashScreen(),
-      // The main widget of your app, displayed after initialization is complete.
+      // Shown when a step fails or the initialization times out.
+      // `retry` runs the startup again with a new `Dependencies`.
+      errorBuilder: (error, stackTrace, retry) =>
+          ErrorScreen(error: error, onRetry: retry),
       app: const App(),
     ),
   );
 }
 
-/// Create a base configuration class for your app.
-/// This extends one of the built-in config types, like `JsonAssetConfig`.
-class AppConfig extends JsonAssetConfig {
-  AppConfig({required super.path, required super.name, required super.color, super.showBanner});
+/// The config keys of the app. Each key has the type of its value.
+abstract final class Keys {
+  static const appName = ConfigKey<String>('APP_NAME');
+}
 
-  /// Define typed getters for your configuration values.
-  /// This provides type safety and a single source of truth for config keys.
-  String get appName => getString('APP_NAME');
+/// A base configuration class for the app's environments.
+class AppConfig extends JsonAssetConfig {
+  AppConfig({
+    required super.path,
+    required super.name,
+    required super.color,
+    super.showBanner,
+  });
+
+  /// Typed getters keep the config keys in one place.
+  String get appName => read(Keys.appName);
 }
 
 /// Create concrete implementations for each environment.
 class ProdConfig extends AppConfig {
-  ProdConfig() : super(name: 'prod', path: 'config/prod.json', color: Colors.green, showBanner: true);
+  ProdConfig()
+    : super(
+        name: 'prod',
+        path: 'config/prod.json',
+        color: Colors.green,
+        showBanner: true,
+      );
 }
 
 class TestConfig extends AppConfig {
-  TestConfig() : super(name: 'test', path: 'config/test.json', color: Colors.red, showBanner: true);
+  TestConfig()
+    : super(
+        name: 'test',
+        path: 'config/test.json',
+        color: Colors.red,
+        showBanner: true,
+      );
 }
 
 // Mock classes for the example.
@@ -50,35 +73,29 @@ class A {}
 
 class B {}
 
-/// Define your app's dependencies and their initialization logic.
-/// This class uses the `AppFuseInitialization` mixin to hook into the startup process.
+/// The app's dependencies and the steps that create them.
 class Dependencies with AppFuseInitialization {
-  Dependencies();
+  /// Reads the dependencies anywhere below [AppFuseScope].
+  static Dependencies of(BuildContext context) =>
+      AppFuseScope.initOf<Dependencies>(context);
 
-  /// A static helper method for easy access to your dependencies from anywhere
-  /// in the widget tree.
-  static Dependencies of(BuildContext context) => AppFuseScope.of(context, listen: false).init as Dependencies;
-
-  // Define late final variables for your services, repositories, etc.
   late final A dependencyA;
   late final B dependencyB;
 
-  /// Define the asynchronous steps required to initialize your app.
-  /// Each key is a descriptive name for the step, which is useful for logging.
+  /// Each key names the step in progress messages and errors.
   @override
   Map<String, InitializationStep> get steps => {
     'initialize dependency A': (state) async {
       // Perform async work like opening a database or initializing a service.
-      await Future.delayed(const Duration(seconds: 1));
+      await Future<void>.delayed(const Duration(seconds: 1));
       dependencyA = A();
     },
     'initialize dependency B': (state) async {
-      final c = state.config as AppConfig;
-      c.appName;
-      final d = state.init as Dependencies;
-      d.dependencyA;
-
-      await Future.delayed(const Duration(seconds: 1));
+      // The active config is ready before the app's steps run.
+      print('Config app name: ${state.getCurrentConfig<AppConfig>()?.appName}');
+      // Earlier steps are done, so their dependencies are ready.
+      print('Dependency A: $dependencyA');
+      await Future<void>.delayed(const Duration(seconds: 1));
       dependencyB = B();
     },
   };
@@ -86,42 +103,40 @@ class Dependencies with AppFuseInitialization {
 
 /// The root widget of your application.
 class App extends StatelessWidget {
-  // Define your environment configurations, app's themes and languages.
-
-  /// AppFuse will automatically load the last used config or the first in the list.
-  static final configs = [TestConfig(), ProdConfig()];
-
-  /// The `themes` map defines the `ThemeData` for different brightness levels.
-  /// AppFuse uses this to automatically switch between light and dark themes.
-  /// You must provide at least a `Brightness.light` theme.
-  static final themes = <Brightness, ThemeData>{Brightness.light: ThemeData.light()};
-
-  /// The `appLanguages` map connects a `Locale` object to its human-readable name.
-  /// This is used to build a language selector UI. The key is the `Locale`
-  /// that Flutter uses, and the value is the string you would display to the user.
-  static final supportedLanguages = <Locale, String>{const Locale('en'): 'English'};
-
-  /// The `localizationsDelegates` list is a standard Flutter concept.
-  /// It contains the delegates needed to load translated strings and format dates/numbers
-  /// for the current locale. AppFuse passes this list directly to the `MaterialApp`.
-  /// You typically get this list from packages like `flutter_localizations`.
-  static const localizationsDelegates = <LocalizationsDelegate<dynamic>>[];
-
   const App({super.key});
 
+  /// AppFuse loads the last used config or the first in the list.
+  static final configs = [TestConfig(), ProdConfig()];
+
+  /// The light theme is optional. Without a dark theme, the theme picker shows only light.
+  static final themes = <Brightness, ThemeData>{
+    Brightness.light: ThemeData.light(),
+    Brightness.dark: ThemeData.dark(),
+  };
+
+  /// Connects each `Locale` to the name that the language picker shows.
+  static final supportedLanguages = <Locale, String>{
+    const Locale('en'): 'English',
+  };
+
+  /// AppFuse keeps this list in its state. It does not pass it to `MaterialApp`, so the app does that.
+  static const localizationsDelegates = <LocalizationsDelegate<dynamic>>[];
+
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    // Use the context extensions to get state from AppFuse.
-    // `watchSettings` rebuilds the widget when the value changes.
-    // `readSettings` gets the value once without subscribing to changes.
-    locale: context.currentLocale,
-    supportedLocales: context.readFuseState.supportedLocales,
-    localizationsDelegates: context.readFuseState.localizationsDelegates,
-    themeMode: context.watchFuseState.themeMode,
-    theme: context.readFuseState.lightTheme,
-    darkTheme: context.readFuseState.darkTheme,
-    home: const HomeScreen(),
-  );
+  Widget build(BuildContext context) {
+    // `currentLocale` and `currentThemeMode` rebuild only when their value changes.
+    // `AppFuseScope.read` reads the state once without a subscription.
+    final state = AppFuseScope.read(context);
+    return MaterialApp(
+      locale: context.currentLocale,
+      supportedLocales: state.supportedLocales,
+      localizationsDelegates: state.localizationsDelegates,
+      themeMode: context.currentThemeMode,
+      theme: state.lightTheme,
+      darkTheme: state.darkTheme,
+      home: const HomeScreen(),
+    );
+  }
 }
 
 class HomeScreen extends StatefulWidget {
@@ -135,23 +150,34 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Access any part of the AppFuse state.
-    // Here, we read a custom setting that might have been saved.
-    final onBoardingComplete = context.readFuseState.getCustomSetting<bool>('onboarding');
-    print('Onboarding complete: $onBoardingComplete'); // if not found, prints null
+    // A custom setting that was not saved reads as null.
+    final onboardingComplete = AppFuseScope.read(
+      context,
+    ).getCustomSetting<bool>('onboarding');
+    print('Onboarding complete: $onboardingComplete');
 
-    // You can also access your initialized dependencies anywhere.
     final dependencyA = Dependencies.of(context).dependencyA;
     print('Accessed dependency: $dependencyA');
   }
 
   @override
   Widget build(BuildContext context) {
-    // Get the current environment configuration and its values.
-    // It's good practice to provide a default value in case the config is null.
-    final appName = context.readFuseState.getCurrentConfig<AppConfig>()?.appName ?? 'No Name';
+    final appName =
+        AppFuseScope.read(context).getCurrentConfig<AppConfig>()?.appName ??
+        'No Name';
     return Scaffold(
-      appBar: AppBar(title: Text(appName)),
+      appBar: AppBar(
+        title: Text(appName),
+        actions: [
+          const LocalizationIconButton(),
+          const ThemeIconButton(),
+          IconButton(
+            icon: const Icon(Icons.tune),
+            tooltip: 'Debug menu',
+            onPressed: () => showAppFuseMenu(context),
+          ),
+        ],
+      ),
       body: const Center(child: Text('Home Screen')),
     );
   }
@@ -160,6 +186,27 @@ class _HomeScreenState extends State<HomeScreen> {
 /// A simple placeholder widget shown during initialization.
 class SplashScreen extends StatelessWidget {
   const SplashScreen({super.key});
+
   @override
-  Widget build(BuildContext context) => const Center(child: CircularProgressIndicator());
+  Widget build(BuildContext context) => const Center(child: Text('Loading'));
+}
+
+/// Shows the startup error and a button that runs the startup again.
+class ErrorScreen extends StatelessWidget {
+  const ErrorScreen({required this.error, required this.onRetry, super.key});
+
+  final Object error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Startup failed: $error', textAlign: TextAlign.center),
+        const SizedBox(height: 16),
+        TextButton(onPressed: onRetry, child: const Text('Retry')),
+      ],
+    ),
+  );
 }

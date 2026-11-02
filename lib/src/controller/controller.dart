@@ -1,16 +1,15 @@
 import 'dart:async';
-import 'dart:collection';
+import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl_standalone.dart' if (dart.library.html) 'package:intl/intl_browser.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:platform_info/platform_info.dart';
 
 import '../models/models.dart';
 import 'storage.dart';
+import 'storage_keys.dart';
 
 part 'config.dart';
 part 'initialization.dart';
@@ -18,267 +17,236 @@ part 'locale.dart';
 part 'permissions.dart';
 part 'theme.dart';
 
-/// A base class for controllers that holds a single value and notifies listeners.
-abstract class IController<S> extends ValueNotifier<S> {
-  IController(super.value);
+const _kAppInfoTimeout = Duration(seconds: 5);
 
-  final mutex = Mutex();
+/// Copies decoded JSON so that every nested map and list cannot change.
+Object? _freeze(Object? value) => switch (value) {
+  final Map<String, Object?> map => _freezeMap(map),
+  final List<Object?> list => List<Object?>.unmodifiable(list.map(_freeze)),
+  _ => value,
+};
 
-  S get state => value;
+Map<String, Object?> _freezeMap(Map<String, Object?> map) => Map.unmodifiable({
+  for (final MapEntry(:key, :value) in map.entries) key: _freeze(value),
+});
 
-  Future<T> handle<T>(Future<T> Function() fn) => mutex.synchronize<T>(fn);
+/// The state, callbacks, and storage helpers that each feature of [AppFuseController] uses.
+///
+/// Only the controller can change the state. [value] has no setter.
+abstract class _AppFuseBase<T extends AppFuseInitialization>
+    extends ChangeNotifier
+    implements ValueListenable<AppFuseState> {
+  _AppFuseBase(
+    this._state, {
+    required this.initTimeout,
+    required this.onProgress,
+    required this.onError,
+    required IAppFuseStorage? storage,
+    T Function()? setup,
+  }) : _storage = storage,
+       _createSetup = setup;
 
-  void setState(S newState) => value = newState;
-}
+  /// Limits the initialization. `null` waits until it completes.
+  final Duration? initTimeout;
+  final void Function(String message)? onProgress;
+  final void Function(Object error, StackTrace stackTrace)? onError;
 
-/// A simple mutex implementation using a queue of completers.
-/// This allows for synchronizing access to a critical section of code,
-/// ensuring that only one task can execute the critical section at a time.
-class Mutex {
-  /// Creates a new instance of the mutex.
-  Mutex();
+  /// Creates the setup object at startup, after each config switch, and on a retry.
+  final T Function()? _createSetup;
 
-  /// Queue of completers representing tasks waiting for the mutex.
-  final DoubleLinkedQueue<Completer<void>> _queue = DoubleLinkedQueue<Completer<void>>();
+  AppFuseState _state;
 
-  /// Check if the mutex is currently locked.
-  bool get isLocked => _queue.isNotEmpty;
+  /// The current setup object. A config switch or a retry replaces it. `null` when the app gives no setup factory.
+  T? get setup => _setup;
+  T? _setup;
 
-  /// Returns the number of tasks waiting for the mutex.
-  int get tasks => _queue.length;
+  /// Set by the first initialization step when the app gives no storage.
+  IAppFuseStorage? _storage;
+  IAppFuseStorage get _store =>
+      _storage ?? (throw StateError('AppFuse storage is not ready'));
 
-  /// Locks the mutex and returns
-  /// a future that completes when the lock is acquired.
-  /// The returned function can be called to unlock the mutex,
-  /// but it should only be called once and relatively expensive to call.
-  Future<void> lock() {
-    final previous = _queue.lastOrNull?.future ?? Future<void>.value();
-    _queue.add(Completer<void>.sync());
-    return previous;
+  bool _disposed = false;
+
+  /// The theme mode the user picked. [AppFuseState.themeMode] holds it resolved against the themes.
+  ThemeMode _themeChoice = ThemeMode.system;
+
+  /// Completes after the last queued write.
+  Future<void> _writes = Future.value();
+
+  @override
+  AppFuseState get value => _state;
+
+  AppFuseState get state => _state;
+
+  /// Ignored after [dispose], because async work can finish after its owner is gone.
+  void _setState(AppFuseState newState) {
+    if (_disposed || _state == newState) return;
+    _state = newState;
+    notifyListeners();
   }
 
-  /// Unlocks the mutex, allowing the next waiting task to proceed.
-  void unlock() {
-    if (_queue.isEmpty) {
-      assert(false, 'Mutex unlock called when no tasks are waiting.');
-      return;
-    }
-    final completer = _queue.removeFirst(); // Remove the current lock holder
-    if (completer.isCompleted) {
-      assert(false, 'Mutex unlock called when the completer is already completed.');
-      return;
-    }
-    completer.complete();
+  void _report(Object error, StackTrace stackTrace) {
+    if (!_disposed) onError?.call(error, stackTrace);
   }
 
-  /// Synchronizes the execution of a function, ensuring that only one
-  /// task can execute the function at a time.
-  Future<T> synchronize<T>(Future<T> Function() action) async {
-    await lock();
+  /// Runs [action] after the previous writes complete, so saved values and the state stay in order.
+  ///
+  /// A failure goes to the returned future only.
+  Future<R> _serial<R>(Future<R> Function() action) {
+    final result = _writes.then((_) => action());
+    _writes = result.then<void>((_) {}, onError: (Object _) {});
+    return result;
+  }
+
+  /// Like [_serial], and a failure also goes to [onError].
+  Future<R> _queued<R>(Future<R> Function() action) => _serial(() async {
     try {
       return await action();
-    } finally {
-      unlock();
+    } on Object catch (error, stackTrace) {
+      _report(error, stackTrace);
+      rethrow;
     }
+  });
+
+  /// Reads and decodes a saved value. A failure goes to [onError] and returns `null`, so startup continues.
+  Future<R?> _restore<R extends Object>(
+    String key,
+    R? Function(String raw) decode,
+  ) async {
+    try {
+      final raw = await _store.read(key);
+      return raw == null ? null : decode(raw);
+    } on Object catch (error, stackTrace) {
+      _report(error, stackTrace);
+      return null;
+    }
+  }
+
+  /// Returns [state] with [AppFuseState.locale] resolved from the user choice or the device languages.
+  AppFuseState _withEffectiveLocale(
+    AppFuseState state, [
+    List<Locale>? deviceLocales,
+  ]) {
+    final userLocale = state.userLocale;
+    final locale = userLocale == null
+        ? state.resolveLocales(
+            deviceLocales ?? WidgetsBinding.instance.platformDispatcher.locales,
+          )
+        : state.resolveLocale(userLocale);
+    return locale == state.locale ? state : state.copyWith(locale: locale);
+  }
+
+  static Map<String, Object?> _decodeSettings(String raw) => switch (jsonDecode(
+    raw,
+  )) {
+    final Map<String, Object?> settings => _freezeMap(settings),
+    _ => throw FormatException('custom settings are not a JSON object', raw),
+  };
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }
 
-/// The main controller that orchestrates the application's initialization and state.
-class AppFuseController extends IController<AppFuseState> {
+/// Runs the app's startup, holds [AppFuseState], and saves the user's choices.
+///
+/// Writes that are saved and config switches run one after another. Permission requests do not wait for them.
+///
+/// [T] is the type of the setup object that [setup] creates.
+class AppFuseController<T extends AppFuseInitialization> extends _AppFuseBase<T>
+    with
+        WidgetsBindingObserver,
+        _InitializationMixin<T>,
+        _ConfigMixin<T>,
+        _LocaleMixin<T>,
+        _ThemeMixin<T>,
+        _PermissionMixin<T> {
+  /// Starts the initialization and follows the device languages until [dispose].
   AppFuseController({
-    this.initTimeout = const Duration(minutes: 3),
-    this.onProgress,
-    this.onError,
-    AppFuseInitialization? setup,
+    super.initTimeout,
+    super.onProgress,
+    super.onError,
+    super.setup,
     List<BaseConfig>? configs,
     Map<Brightness, ThemeData>? themes,
     Map<Locale, String>? supportedLanguages,
     Iterable<LocalizationsDelegate<dynamic>>? localizationsDelegates,
-    IAppFuseStorage? storage,
-  })  : _fuseStorage = storage,
-        _setupSteps = setup ?? EmptyInitialization(),
-        _configs = configs ?? const [],
-        _localizationsDelegates = localizationsDelegates ?? const [],
-        _supportedLanguages = supportedLanguages ?? {const Locale('en'): 'English'},
-        _themes = themes ?? {Brightness.light: ThemeData.light()},
-        super(AppFuseState.initial()) {
-    _initialiseApp();
+    super.storage,
+  }) : super(
+         AppFuseState.initial(
+           configs: configs,
+           themes: themes,
+           supportedLanguages: supportedLanguages,
+           localizationsDelegates: localizationsDelegates,
+         ),
+       ) {
+    WidgetsFlutterBinding.ensureInitialized().addObserver(this);
+    _initialize().ignore();
   }
 
-  final Duration initTimeout;
-  final void Function(String message)? onProgress;
-  final void Function(Object error, StackTrace stackTrace)? onError;
-
-  final List<BaseConfig> _configs;
-  final AppFuseInitialization _setupSteps;
-  final Map<Brightness, ThemeData> _themes;
-  final Map<Locale, String> _supportedLanguages;
-  final Iterable<LocalizationsDelegate<dynamic>> _localizationsDelegates;
-
-  /// Fuse Settings Storage
-  IAppFuseStorage? _fuseStorage;
-
-  /// Ephemerally initializes the app and prepares it for use.
-  Future<AppFuseInitialization>? _$currentInitialization;
-
-  /// Reports a progress message to the state and the onProgress callback.
-  void _onProgress(String message) {
-    setState(state.copyWith(progressMessage: message));
-    onProgress?.call(message);
-  }
-
-  /// Updates the state with error information and calls the onError callback.
-  void _onError(Object error, StackTrace stackTrace) {
-    setState(state.copyWith(
-      error: error,
-      stackTrace: stackTrace,
-    ));
-    setState(state.stopProcessing());
-    onError?.call(error, stackTrace);
-  }
-}
-
-/// An immutable class representing the entire state of the application.
-@immutable
-class AppFuseState {
-  const AppFuseState({
-    required this.metaData,
-    required this.lightTheme,
-    this.init,
-    this.config = const EmptyConfig(),
-    this.configs,
-    this.permissions = const <Permission, PermissionStatus>{},
-    this.localizationsDelegates = const [],
-    this.supportedLocales = const <Locale>[Locale('en')],
-    this.customSettings = const <String, Object?>{},
-    this.locale = const Locale('en'),
-    this.themeMode = ThemeMode.system,
-    this.darkTheme,
-    this.isProcessing = false,
-    this.progressMessage,
-    this.error,
-    this.stackTrace,
-  });
-
-  factory AppFuseState.initial() => AppFuseState(
-        isProcessing: true,
-        lightTheme: ThemeData.light(),
-        metaData: AppMetaData.none(),
-      );
-
-  AppFuseState startProcessing() => copyWith(isProcessing: true);
-  AppFuseState stopProcessing() => copyWith(isProcessing: false);
-
-  final AppFuseInitialization? init;
-
-  final BaseConfig config;
-  final List<BaseConfig>? configs;
-  T? getCurrentConfig<T extends BaseConfig>() {
-    if (config is! T) return null;
-    return config as T;
-  }
-
-  final Map<String, Object?> customSettings;
-  T? getCustomSetting<T>(String key) {
-    if (customSettings[key] == null) return null;
-    if (customSettings[key] is! T) return null;
-    return customSettings[key] as T;
-  }
-
-  final AppMetaData metaData;
-  final Map<Permission, PermissionStatus> permissions;
-
-  final Iterable<LocalizationsDelegate<dynamic>> localizationsDelegates;
-  final Iterable<Locale> supportedLocales;
-  final Locale locale;
-
-  final ThemeMode themeMode;
-  final ThemeData lightTheme;
-  final ThemeData? darkTheme;
-
-  final bool isProcessing;
-  final String? progressMessage;
-  final Object? error;
-  final StackTrace? stackTrace;
-
-  bool get hasError => error != null;
-
-  AppFuseState copyWith({
-    AppFuseInitialization? setup,
-    BaseConfig? config,
+  /// Replaces the options that can change after startup, for example on a rebuild of [AppFuseScope].
+  ///
+  /// A `null` value uses the default. Resolves the locale and theme mode again.
+  ///
+  /// The active config stays active while [configs] has a config with its
+  /// name. Otherwise, after startup, this calls [activateConfig] with the first
+  /// config, or with [EmptyConfig] when [configs] is empty. [onError] receives
+  /// a failure of that switch.
+  void updateOptions({
     List<BaseConfig>? configs,
-    Map<String, Object?>? customSettings,
-    AppMetaData? metaData,
-    Map<Permission, PermissionStatus>? permissions,
+    Map<Brightness, ThemeData>? themes,
+    Map<Locale, String>? supportedLanguages,
     Iterable<LocalizationsDelegate<dynamic>>? localizationsDelegates,
-    Iterable<Locale>? supportedLocales,
-    Locale? locale,
-    ThemeMode? themeMode,
-    ThemeData? lightTheme,
-    ThemeData? darkTheme,
-    bool? isProcessing,
-    String? progressMessage,
-    Object? error,
-    StackTrace? stackTrace,
-  }) =>
-      AppFuseState(
-        init: setup ?? init,
-        config: config ?? this.config,
-        configs: configs ?? this.configs,
-        customSettings: customSettings ?? this.customSettings,
-        metaData: metaData ?? this.metaData,
-        permissions: permissions ?? this.permissions,
-        localizationsDelegates: localizationsDelegates ?? this.localizationsDelegates,
-        supportedLocales: supportedLocales ?? this.supportedLocales,
-        locale: locale ?? this.locale,
-        themeMode: themeMode ?? this.themeMode,
-        lightTheme: lightTheme ?? this.lightTheme,
-        darkTheme: darkTheme ?? this.darkTheme,
-        isProcessing: isProcessing ?? this.isProcessing,
-        progressMessage: progressMessage ?? this.progressMessage,
-        error: error ?? this.error,
-        stackTrace: stackTrace ?? this.stackTrace,
-      );
+  }) {
+    // Uses the same defaults as at startup.
+    final options = AppFuseState.initial(
+      configs: configs,
+      themes: themes,
+      supportedLanguages: supportedLanguages,
+      localizationsDelegates: localizationsDelegates,
+    );
+    final next = state.copyWith(
+      configs: options.configs,
+      themes: options.themes,
+      supportedLanguages: options.supportedLanguages,
+      localizationsDelegates: options.localizationsDelegates,
+    );
+    _setState(
+      _withEffectiveLocale(
+        next.copyWith(themeMode: next.resolveThemeMode(_themeChoice)),
+      ),
+    );
+    _replaceMissingConfig();
+  }
 
-  @override
-  bool operator ==(covariant AppFuseState other) {
-    if (identical(this, other)) return true;
-
-    return other.init == init &&
-        other.config == config &&
-        listEquals(other.configs, configs) &&
-        other.metaData == metaData &&
-        mapEquals(other.permissions, permissions) &&
-        mapEquals(other.customSettings, customSettings) &&
-        other.localizationsDelegates == localizationsDelegates &&
-        other.supportedLocales == supportedLocales &&
-        other.locale == locale &&
-        other.themeMode == themeMode &&
-        other.lightTheme == lightTheme &&
-        other.darkTheme == darkTheme &&
-        other.isProcessing == isProcessing &&
-        other.progressMessage == progressMessage &&
-        other.error == error &&
-        other.stackTrace == stackTrace;
+  /// Switches to another config when the active one is not in [AppFuseState.configs].
+  void _replaceMissingConfig() {
+    if (state.phase is! AppFuseReady) return;
+    final active = state.config;
+    final BaseConfig next;
+    if (state.configs.isEmpty) {
+      if (active is EmptyConfig) return;
+      next = const EmptyConfig();
+    } else if (state.configs.any((config) => config.name == active.name)) {
+      return;
+    } else {
+      next = state.configs.first;
+    }
+    // activateConfig reports its failures to onError.
+    activateConfig(next).ignore();
   }
 
   @override
-  int get hashCode => Object.hash(
-        init,
-        config,
-        configs,
-        metaData,
-        permissions,
-        customSettings,
-        localizationsDelegates,
-        supportedLocales,
-        locale,
-        themeMode,
-        lightTheme,
-        darkTheme,
-        isProcessing,
-        progressMessage,
-        error,
-        stackTrace,
-      );
+  void didChangeLocales(List<Locale>? locales) =>
+      _setState(_withEffectiveLocale(state, locales));
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    // Not awaited. A failure goes to onError directly, because _report is silent after dispose.
+    _releaseSetup(onError).ignore();
+    super.dispose();
+  }
 }

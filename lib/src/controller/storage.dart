@@ -1,52 +1,93 @@
-import 'dart:convert';
-
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// An interface for a simple key-value storage system.
+import 'storage_keys.dart';
+
+/// A key-value store for strings. AppFuse encodes every value it saves as a string.
+///
+/// [write] and [remove] must throw when they fail, so AppFuse keeps the old state.
 abstract interface class IAppFuseStorage {
-  Future<bool> setValue<T>(String key, T value);
-  Future<T?> getValue<T>(String key);
+  Future<String?> read(String key);
+  Future<void> write(String key, String value);
+  Future<void> remove(String key);
 }
 
-/// A default storage implementation using the `shared_preferences` package.
+/// The default storage, backed by `SharedPreferencesWithCache`.
+///
+/// It reads and writes only the keys that AppFuse stores. Any other key throws
+/// an [ArgumentError], so AppFuse cannot touch the other values of the app.
+/// Reads come from a cache that [init] loads once.
+///
+/// [init] copies the `appfuse.` values of the legacy `SharedPreferences` API
+/// once, so saved settings survive the switch to the new API.
 class AppFuseShPrStorage implements IAppFuseStorage {
-  AppFuseShPrStorage._();
+  AppFuseShPrStorage._(this._prefs);
 
-  static late SharedPreferences _prefs;
+  final SharedPreferencesWithCache _prefs;
 
+  static const _prefix = 'appfuse.';
+
+  /// Opens the storage after the one-time migration from the legacy API.
+  ///
+  /// The migration copies only string values with the `appfuse.` prefix, and
+  /// it does not replace a value that the new storage already holds. It does
+  /// not delete legacy values. Other keys of the app stay untouched.
   static Future<AppFuseShPrStorage> init() async {
-    _prefs = await SharedPreferences.getInstance();
-    return AppFuseShPrStorage._();
+    await _migrate();
+    final prefs = await SharedPreferencesWithCache.create(
+      cacheOptions: const SharedPreferencesWithCacheOptions(
+        allowList: AppFuseKeys.stored,
+      ),
+    );
+    return AppFuseShPrStorage._(prefs);
+  }
+
+  // TODO(migration): Remove in 0.1.0. It moves values saved by 0.0.1 and 0.0.2
+  // (legacy SharedPreferences) to the new store. Then also remove the call in
+  // [init], AppFuseKeys.migration, and the migration tests in storage_test.dart.
+  static Future<void> _migrate() async {
+    final prefs = SharedPreferencesAsync();
+    if (await prefs.containsKey(AppFuseKeys.migration)) return;
+    final legacy = await SharedPreferences.getInstance();
+    for (final key in legacy.getKeys().where(
+      (key) => key.startsWith(_prefix),
+    )) {
+      if (legacy.get(key) case final String value
+          when !await prefs.containsKey(key)) {
+        await prefs.setString(key, value);
+      }
+    }
+    await prefs.setBool(AppFuseKeys.migration, true);
+  }
+
+  /// Throws a [FormatException] when the stored value is not a string.
+  @override
+  Future<String?> read(String key) async {
+    try {
+      return _prefs.getString(key);
+    } on TypeError {
+      throw FormatException('"$key" does not hold a String');
+    }
   }
 
   @override
-  Future<T?> getValue<T>(String key) async {
-    final value = _prefs.get(key);
-
-    if (value == null) return null;
-    return switch (value) {
-      bool b when T == bool => b as T,
-      int i when T == int => i as T,
-      double d when T == double => d as T,
-      String s when T == String => s as T,
-      String dt when T == DateTime => DateTime.parse(dt) as T,
-      String m when T == Map => jsonDecode(m) as T,
-      String m when T == (Map<String, Object?>) => jsonDecode(m) as T,
-      String m when T == (Map<String, dynamic>) => jsonDecode(m) as T,
-      List<String> list when T == (List<String>) => list as T,
-      _ => throw UnsupportedError('Type $T is not supported by SharedPreferencesStorage'),
-    };
-  }
+  Future<void> write(String key, String value) =>
+      _restoreCacheOnFailure(() => _prefs.setString(key, value));
 
   @override
-  Future<bool> setValue<T>(String key, T value) => switch (value) {
-        bool b => _prefs.setBool(key, b),
-        int i => _prefs.setInt(key, i),
-        double d => _prefs.setDouble(key, d),
-        String s => _prefs.setString(key, s),
-        List<String> list => _prefs.setStringList(key, list),
-        Map<String, Object?> map => _prefs.setString(key, jsonEncode(map)),
-        DateTime dt => _prefs.setString(key, dt.toIso8601String()),
-        _ => throw UnsupportedError('Type ${value.runtimeType} is not supported by SharedPreferencesStorage'),
-      };
+  Future<void> remove(String key) =>
+      _restoreCacheOnFailure(() => _prefs.remove(key));
+
+  /// The cache changes before the platform write, so a failed write reloads it.
+  Future<void> _restoreCacheOnFailure(Future<void> Function() action) async {
+    try {
+      await action();
+    } on Object {
+      try {
+        await _prefs.reloadCache();
+      } on Object {
+        // The write error is the one to report.
+      }
+      rethrow;
+    }
+  }
 }

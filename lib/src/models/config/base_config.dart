@@ -1,5 +1,7 @@
 import 'package:flutter/widgets.dart';
 
+import '../exceptions.dart';
+
 /// An abstract base class for all environment configurations.
 abstract class BaseConfig {
   const BaseConfig({
@@ -24,6 +26,7 @@ abstract class BaseConfig {
   T getConfigValue<T extends Object?>(String key);
 }
 
+/// The active config when `AppFuseScope` has no configs. It has no values.
 class EmptyConfig extends BaseConfig {
   const EmptyConfig() : super(name: 'NONE', showBanner: false);
 
@@ -31,7 +34,9 @@ class EmptyConfig extends BaseConfig {
   Future<BaseConfig> init() async => this;
 
   @override
-  T getConfigValue<T extends Object?>(String key) => throw Exception(
-        "Configuration Error: You are trying to access the config key '$key', but no environment configurations were provided to AppFuseScope. Please provide a non-empty list to the `configs` parameter.",
-      );
+  T getConfigValue<T extends Object?>(
+    String key,
+  ) => throw AppFuseConfigException(
+    "Config key '$key' not found: AppFuseScope has no configs. Pass a non-empty list to `configs`.",
+  );
 }

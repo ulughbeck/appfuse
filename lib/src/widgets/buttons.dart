@@ -1,33 +1,37 @@
-import 'package:appfuse/appfuse.dart';
 import 'package:flutter/material.dart';
 
+import 'foundation/scope.dart';
+import 'utils/dialogs.dart';
+
+/// Opens [selectLocaleDialog]. The tooltip names the current language.
 class LocalizationIconButton extends StatelessWidget {
   const LocalizationIconButton({
     super.key,
     this.dialogTitle = 'Language',
+    this.systemLabel = 'System',
     this.iconColor,
   });
   final String dialogTitle;
+
+  /// The name of the dialog entry that follows the device languages.
+  final String systemLabel;
   final Color? iconColor;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        onLongPress: () {
-          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Current language ${context.currentLanguage}'),
-            ),
-          );
-        },
-        child: IconButton(
-          icon: const Icon(Icons.language),
-          color: iconColor,
-          onPressed: () => selectLocaleDialog(context, title: dialogTitle),
-        ),
-      );
+  Widget build(BuildContext context) => IconButton(
+    icon: const Icon(Icons.language),
+    color: iconColor,
+    tooltip:
+        'Current language: ${AppFuseScope.watch(context, AppFuseAspect.locale).languageName}',
+    onPressed: () => selectLocaleDialog(
+      context,
+      title: dialogTitle,
+      systemLabel: systemLabel,
+    ),
+  );
 }
 
+/// Opens [selectThemeDialog]. The icon and tooltip show the current theme mode.
 class ThemeIconButton extends StatelessWidget {
   const ThemeIconButton({
     super.key,
@@ -39,25 +43,16 @@ class ThemeIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final icon = switch (context.currentThemeMode) {
-      ThemeMode.light => Icons.sunny,
-      ThemeMode.dark => Icons.nightlight_round,
-      ThemeMode.system => Icons.perm_device_info,
-    };
-    return GestureDetector(
-      onLongPress: () {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Current theme mode ${context.currentThemeModeName}'),
-          ),
-        );
-      },
-      child: IconButton(
-        icon: Icon(icon),
-        color: iconColor,
-        onPressed: () => selectThemeDialog(context, title: dialogTitle),
-      ),
+    final mode = context.currentThemeMode;
+    return IconButton(
+      icon: Icon(switch (mode) {
+        ThemeMode.light => Icons.sunny,
+        ThemeMode.dark => Icons.nightlight_round,
+        ThemeMode.system => Icons.brightness_auto,
+      }),
+      color: iconColor,
+      tooltip: 'Current theme mode: ${mode.name}',
+      onPressed: () => selectThemeDialog(context, title: dialogTitle),
     );
   }
 }

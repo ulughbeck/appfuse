@@ -1,165 +1,228 @@
 part of 'controller.dart';
 
-const _kFirstLaunchTimeStamp = 'appfuse.settings.firstLaunch';
+mixin _InitializationMixin<T extends AppFuseInitialization> on _AppFuseBase<T> {
+  /// The setup object that already got [AppFuseInitialization.dispose].
+  AppFuseInitialization? _releasedSetup;
 
-extension $Initialization on AppFuseController {
-  /// Kicks off the entire application initialization process.
-  Future<void> _initialiseApp() async {
+  /// The first launch is known only on the first run, because a run saves the launch date.
+  bool? _isFirstLaunch;
+
+  /// Creates the setup object, then runs the built-in steps and its steps.
+  Future<void> _initialize() => _runInitialization(_startupSteps);
+
+  List<MapEntry<String, InitializationStep>> _startupSteps() => [
+    ..._builtInSteps.entries,
+    ..._createSetupSteps(),
+  ];
+
+  /// Runs the startup again after it failed, with a new setup object.
+  ///
+  /// The old setup object gets [AppFuseInitialization.dispose]. The built-in
+  /// steps and the steps of the new object run again. A new failure sets [AppFuseFailed] again
+  /// and goes to [onError]. The returned future completes after the run, also
+  /// after a failure.
+  ///
+  /// Runs after earlier writes. Fails with a [StateError] when the phase is not [AppFuseFailed].
+  Future<void> retry() => _serial(() async {
+    if (state.phase is! AppFuseFailed) {
+      throw StateError('Cannot retry while AppFuse has no error');
+    }
+    _setState(state.copyWith(phase: const AppFuseStarting()));
+    await _releaseSetup(_report);
+    if (_disposed) return;
+    await _runInitialization(_startupSteps);
+  });
+
+  /// Creates the setup object and returns its steps. Without a setup factory there are none.
+  List<MapEntry<String, InitializationStep>> _createSetupSteps() {
+    final setup = _createSetup?.call();
+    _setup = setup;
+    return [...?setup?.steps.entries];
+  }
+
+  /// Runs the steps that [build] returns, with progress and [initTimeout].
+  ///
+  /// [build] runs inside the error handling. Sets the phase to [AppFuseReady],
+  /// or to [AppFuseFailed] after a failure, which is reported once. Returns the
+  /// new phase.
+  Future<AppFusePhase> _runInitialization(
+    List<MapEntry<String, InitializationStep>> Function() build,
+  ) async {
+    var timedOut = false;
     try {
-      setState(state.startProcessing());
-      setState(state.copyWith(setup: _setupSteps));
-
-      final setup = await _initialize(
-        setup: _setupSteps,
-        configs: _configs,
-      ).timeout(initTimeout);
-
-      setState(state.copyWith(setup: setup));
+      final run = _runSteps(build(), () => timedOut);
+      final timeout = initTimeout;
+      await (timeout == null
+          ? run
+          : run.timeout(
+              timeout,
+              onTimeout: () {
+                timedOut = true;
+                throw TimeoutException('initialization timed out', timeout);
+              },
+            ));
+      return _finish(const AppFuseReady());
     } on Object catch (error, stackTrace) {
-      _onError(error, stackTrace);
-      rethrow;
-    } finally {
-      setState(state.stopProcessing());
+      final phase = _finish(AppFuseFailed(error, stackTrace));
+      _report(error, stackTrace);
+      return phase;
     }
   }
 
-  /// Initializes the app and prepares it for use.
-  Future<AppFuseInitialization> _initialize({
-    required AppFuseInitialization setup,
-    required List<BaseConfig> configs,
-  }) =>
-      _$currentInitialization ??= Future<AppFuseInitialization>(() async {
-        late final WidgetsBinding binding;
-        final stopwatch = Stopwatch()..start();
+  AppFusePhase _finish(AppFusePhase phase) {
+    _setState(state.copyWith(phase: phase));
+    return phase;
+  }
 
-        try {
-          binding = WidgetsFlutterBinding.ensureInitialized()..deferFirstFrame();
-          await _catchExceptions();
+  /// Calls [AppFuseInitialization.dispose] once on the current setup object.
+  ///
+  /// A failure goes to [onFailure]. It never throws.
+  Future<void> _releaseSetup(
+    void Function(Object error, StackTrace stackTrace)? onFailure,
+  ) async {
+    final setup = _setup;
+    if (setup == null || identical(setup, _releasedSetup)) return;
+    _releasedSetup = setup;
+    try {
+      await setup.dispose();
+    } on Object catch (error, stackTrace) {
+      onFailure?.call(error, stackTrace);
+    }
+  }
 
-          final initializationSteps = <String, InitializationStep>{
-            if (_fuseStorage == null)
-              'initialize AppFuseStorage': (_) async {
-                _fuseStorage = await AppFuseShPrStorage.init();
-              },
-            'fetch meta data': (_) async {
-              await _fetchAppMetaData();
-            },
-            'fetch and activate environment config': (_) async {
-              if (configs.isNotEmpty) {
-                await _fetchSavedConfig(configs);
-              } else {
-                setState(state.copyWith(config: const EmptyConfig()));
-              }
-            },
-            'fetch saved settings': (_) async {
-              await _fetchSavedSettings();
-            },
-          }..addAll(setup.steps);
+  Map<String, InitializationStep> get _builtInSteps => {
+    if (_storage == null)
+      'initialize AppFuseStorage': (_) async {
+        _storage = await AppFuseShPrStorage.init();
+      },
+    'fetch meta data': (_) => _fetchAppMetaData(),
+    'fetch and activate environment config': (_) => _fetchSavedConfig(),
+    'fetch saved settings': (_) => _fetchSavedSettings(),
+  };
 
-          _onProgress('initialization started');
-          final totalSteps = initializationSteps.length;
-          var currentStep = 0;
-          for (final step in initializationSteps.entries) {
-            try {
-              currentStep++;
-              final percent = (currentStep * 100 ~/ totalSteps).clamp(0, 100);
-              _onProgress('initialization | $currentStep/$totalSteps ($percent%) | "${step.key}"');
-              await step.value(state);
-            } on Object catch (error, stackTrace) {
-              _onError('initialization failed at step "${step.key}": $error', stackTrace);
-              Error.throwWithStackTrace('initialization failed at step "${step.key}": $error', stackTrace);
-            }
-          }
+  /// Runs the steps in order.
+  ///
+  /// A timeout does not stop the running step, so no later step starts once
+  /// [isCancelled] returns `true` or the controller is disposed.
+  Future<void> _runSteps(
+    List<MapEntry<String, InitializationStep>> steps,
+    bool Function() isCancelled,
+  ) async {
+    final stopwatch = Stopwatch()..start();
 
-          return setup;
-        } on Object catch (error, stackTrace) {
-          _onError('failed to initialize app: $error', stackTrace);
-          rethrow;
-        } finally {
-          stopwatch.stop();
-          _onProgress('initialization finished in ${stopwatch.elapsed}');
+    _setState(state.copyWith(phase: const AppFuseStarting()));
+    onProgress?.call('initialization started');
+    for (final (index, MapEntry(key: name, value: step)) in steps.indexed) {
+      if (isCancelled() || _disposed) return;
+      final current = index + 1;
+      final total = steps.length;
+      final percent = current * 100 ~/ total;
+      _setState(
+        state.copyWith(
+          phase: AppFuseStarting(
+            AppFuseProgress(current: current, total: total, step: name),
+          ),
+        ),
+      );
+      onProgress?.call(
+        'initialization | $current/$total ($percent%) | "$name"',
+      );
+      final task = developer.TimelineTask()..start('AppFuse: $name');
+      try {
+        await step(state);
+      } on Object catch (error, stackTrace) {
+        Error.throwWithStackTrace(
+          AppFuseInitException(name, error),
+          stackTrace,
+        );
+      } finally {
+        task.finish();
+      }
+    }
+    if (isCancelled() || _disposed) return;
+    onProgress?.call('initialization finished in ${stopwatch.elapsed}');
+  }
 
-          binding.addPostFrameCallback((_) {
-            // Closes splash screen, and show the app layout.
-            binding.allowFirstFrame();
-            //final context = binding.renderViewElement;
-          });
-          _$currentInitialization = null;
-        }
-      });
-
-  /// Loads saved user preferences like theme, locale, and custom settings from storage.
+  /// Restores the custom settings, locale, and theme mode. A bad value falls back to its default.
   Future<void> _fetchSavedSettings() async {
-    final customSettings = await _fuseStorage!.getValue<Map<String, Object?>>(_kCustomSettings);
-    await changeLocale();
-    await changeThemeMode();
+    final customSettings = await _restore(
+      AppFuseKeys.customSettings,
+      _AppFuseBase._decodeSettings,
+    );
+    final userLocale = await _restore(AppFuseKeys.locale, _parseLocale);
+    final themeMode = await _restore(
+      AppFuseKeys.themeMode,
+      (name) =>
+          ThemeMode.values.asNameMap()[name] ??
+          (throw FormatException('unknown theme mode', name)),
+    );
 
-    setState(state.copyWith(
-      customSettings: customSettings,
-      lightTheme: _themes[Brightness.light] ?? ThemeData.light(),
-      darkTheme: _themes[Brightness.dark],
-      supportedLocales: supportedLocales,
-      localizationsDelegates: _localizationsDelegates,
-    ));
+    _themeChoice = themeMode ?? ThemeMode.system;
+    _setState(
+      _withEffectiveLocale(
+        state.copyWith(
+          customSettings: customSettings,
+          userLocale: () => userLocale,
+          themeMode: state.resolveThemeMode(_themeChoice),
+        ),
+      ),
+    );
   }
 
   /// Loads and activates the previously saved or default configuration.
-  Future<void> _fetchSavedConfig(List<BaseConfig> configs) async {
-    final name = await _fuseStorage!.getValue<String>(_kConfigSelected);
-    final iterator = configs.where((config) => config.name == name);
-    final enabledConfig = iterator.isNotEmpty ? iterator.first : configs.first;
-    final configLoaded = await enabledConfig.init();
-    setState(state.copyWith(configs: configs, config: configLoaded));
+  Future<void> _fetchSavedConfig() async {
+    final configs = state.configs;
+    if (configs.isEmpty) return;
+    final name = await _restore(AppFuseKeys.config, (name) => name);
+    final config =
+        configs.where((config) => config.name == name).firstOrNull ??
+        configs.first;
+    _setState(state.copyWith(config: await config.init()));
   }
 
   /// Gathers and stores application and device metadata.
+  ///
+  /// The app works without it, so a failure goes to [onError] and the app
+  /// info stays empty. On web the app info is a network request, so it has a
+  /// time limit.
   Future<void> _fetchAppMetaData() async {
-    final info = await PackageInfo.fromPlatform();
+    PackageInfo? info;
+    try {
+      info = await PackageInfo.fromPlatform().timeout(_kAppInfoTimeout);
+    } on Object catch (error, stackTrace) {
+      _report(error, stackTrace);
+    }
 
-    final appFirstLaunchTimestamp = await _fuseStorage!.getValue<DateTime>(_kFirstLaunchTimeStamp);
-    final isFirstLaunch = appFirstLaunchTimestamp == null;
-    if (isFirstLaunch) _fuseStorage!.setValue<DateTime>(_kFirstLaunchTimeStamp, DateTime.now()).ignore();
+    final appFirstLaunchTimestamp = await _restore(
+      AppFuseKeys.firstLaunch,
+      DateTime.parse,
+    );
+    final isFirstLaunch = _isFirstLaunch ??= appFirstLaunchTimestamp == null;
+    final now = DateTime.now();
+    if (appFirstLaunchTimestamp == null) {
+      try {
+        await _store.write(AppFuseKeys.firstLaunch, now.toIso8601String());
+      } on Object catch (error, stackTrace) {
+        // The app works without it, so this does not stop startup.
+        _report(error, stackTrace);
+      }
+    }
 
     final metaData = AppMetaData(
-      isWeb: platform.js,
-      isRelease: platform.buildMode.release,
+      isWeb: kIsWeb,
+      isRelease: kReleaseMode,
       isFirstLaunch: isFirstLaunch,
-      appVersion: info.version,
-      appPackageName: info.packageName,
-      appBuildNumber: info.buildNumber,
-      appName: info.appName,
-      operatingSystem: platform.operatingSystem.name,
-      processorsCount: platform.numberOfProcessors,
-      systemLocale: platform.locale,
-      deviceVersion: platform.version,
-      appFirstLaunchTimestamp: appFirstLaunchTimestamp ?? DateTime.now(),
-      appLaunchedTimestamp: DateTime.now(),
+      appVersion: info?.version ?? '',
+      appPackageName: info?.packageName ?? '',
+      appBuildNumber: info?.buildNumber ?? '',
+      appName: info?.appName ?? '',
+      operatingSystem: defaultTargetPlatform.name,
+      systemLocale: WidgetsBinding.instance.platformDispatcher.locale
+          .toLanguageTag(),
+      appFirstLaunchTimestamp: appFirstLaunchTimestamp ?? now,
+      appLaunchedTimestamp: now,
     );
 
-    setState(state.copyWith(metaData: metaData));
-  }
-
-  /// Sets up global error handlers to catch and log uncaught exceptions.
-  Future<void> _catchExceptions() async {
-    try {
-      PlatformDispatcher.instance.onError = (error, stackTrace) {
-        developer.log('$error',
-            error: error, stackTrace: stackTrace, name: 'ROOT ERROR\r\n${Error.safeToString(error)}');
-        return true;
-      };
-
-      final sourceFlutterError = FlutterError.onError;
-      FlutterError.onError = (final details) {
-        developer.log(
-          '${details.exception}',
-          error: details.exception,
-          stackTrace: details.stack ?? StackTrace.current,
-          name: 'FLUTTER ERROR\r\n$details',
-        );
-        sourceFlutterError?.call(details);
-      };
-    } on Object catch (error, stackTrace) {
-      developer.log('$error', error: error, stackTrace: stackTrace);
-    }
+    _setState(state.copyWith(metaData: metaData));
   }
 }

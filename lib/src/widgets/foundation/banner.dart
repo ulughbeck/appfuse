@@ -1,5 +1,8 @@
 import 'package:flutter/widgets.dart';
 
+/// Shows the active config name in the top-start corner.
+///
+/// Without [onPressed] and [onLongPressed], taps pass through to the app.
 @immutable
 class ConfigBanner extends StatelessWidget {
   const ConfigBanner({
@@ -15,20 +18,24 @@ class ConfigBanner extends StatelessWidget {
   final VoidCallback? onLongPressed;
 
   @override
-  Widget build(BuildContext context) => GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onLongPress: onLongPressed,
-        onTap: onPressed,
-        child: SizedBox(
-          height: 50,
-          width: 50,
-          child: Banner(
-            location: BannerLocation.topStart,
-            color: color,
-            message: name,
-            textDirection: Directionality.of(context),
-            layoutDirection: Directionality.of(context),
-          ),
-        ),
-      );
+  Widget build(BuildContext context) {
+    final banner = SizedBox(
+      height: 50,
+      width: 50,
+      child: Banner(
+        location: BannerLocation.topStart,
+        color: color,
+        message: name,
+        textDirection: Directionality.of(context),
+        layoutDirection: Directionality.of(context),
+      ),
+    );
+    if (onPressed == null && onLongPressed == null)
+      return IgnorePointer(child: banner);
+    return GestureDetector(
+      onTap: onPressed,
+      onLongPress: onLongPressed,
+      child: banner,
+    );
+  }
 }

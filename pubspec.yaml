@@ -1,5 +1,5 @@
 name: appfuse
-description: orchestrator for Flutter apps
+description: Orchestrates Flutter app startup with init steps, environment configs, saved locale and theme, permissions, and debug tools in one scope.
 
 homepage: https://github.com/ulughbeck/appfuse
 repository: https://github.com/ulughbeck/appfuse
@@ -20,24 +20,27 @@ platforms:
   web:
   windows:
 
-version: 0.0.2
+version: 0.0.3
 
 environment:
-  sdk: ^3.10.0
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
+
+workspace:
+  - example
 
 dependencies:
   flutter:
     sdk: flutter
-  flutter_localizations:
-    sdk: flutter
-  intl: ^0.20.2
-  shared_preferences: ^2.5.5
-  package_info_plus: ^10.1.0
-  platform_info: ^5.0.0
-  permission_handler: ^12.0.3
+  shared_preferences: ^2.5.6
+  package_info_plus: ^10.2.2
+  permission_handler: ^13.0.2
   http: ^1.6.0
 
-dev_dependencies: 
+dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  package_info_plus_platform_interface: ^4.1.0
+  plugin_platform_interface: ^2.1.8
+  shared_preferences_platform_interface: ^2.4.2

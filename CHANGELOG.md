@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.0.3
+
+- **Breaking**: smaller API: `AppFuseScope.read`, `watch(context, aspect)`, `controller`, `initOf<T>`, and `context.fuse`. `init:` takes a factory (`Dependencies.new`), `AppFuseState.phase` replaces `isProcessing`/`error`/`progress`, configs read values with a typed `ConfigKey<T>`, and `IAppFuseStorage` stores strings. `Header` and `SettingTile` are now `AppFuseSettingsHeader` and `AppFuseSettingTile`. Only `Permission`, `PermissionStatus`, and their getters are re-exported from `permission_handler`. Android needs `compileSdk = 37`, and there `checkPermissionStatus` no longer returns `permanentlyDenied`.
+- **Changed**: a config switch is a soft restart that saves the choice only after the init steps succeed. The native splash stays until startup ends (`keepNativeSplash`). On macOS, Linux, and Fuchsia the permission helpers return `granted` instead of throwing.
+- **Added**: `retry()` after an init error, `AppFuseAspect` for targeted rebuilds, the "System" language option, `removeCustomSetting`, `AppFuseInitialization.dispose()`, a permission recheck on app resume, DevTools timeline events, and inspector support for `AppFuseState`.
+- **Fixed**: bad saved data and a failed or slow app info read no longer stop startup. Writes run in order, and a failed write keeps the current value. The state is unmodifiable. Theme choice, placeholder theming, the permission dialog, and a removed active config are handled correctly.
+- **Dependencies**: removed `intl`, `flutter_localizations`, and `platform_info`. `permission_handler` ^13.0.2, `package_info_plus` ^10.2.2, `shared_preferences` ^2.5.6 (`SharedPreferencesWithCache`, saved values migrate once). Requires Dart 3.11 and Flutter 3.41.
+- **Tests**: split by feature and expanded to 117 tests.
+
 ## 0.0.2
 
 - **Fixed**: stale `MediaQuery` shadowing the live root one. `VitalApp` wrapped the entire app in a one-shot `MediaQueryData.fromView` snapshot with no metrics listener; since Flutter 3.10 the root `View` owns the live `MediaQuery` and `WidgetsApp` installs none of its own, so the app's metrics froze at startup values (symptom: app rendered with frozen/halved screen metrics when the platform corrected the window size after launch).

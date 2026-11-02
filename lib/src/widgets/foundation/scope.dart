@@ -1,5 +1,6 @@
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../controller/controller.dart';
@@ -9,12 +10,15 @@ import 'banner.dart';
 import 'vital_app.dart';
 
 /// A top-level widget that initializes and provides app-wide dependencies, configurations, and settings to the entire widget tree.
-class AppFuseScope extends StatefulWidget {
+///
+/// [T] is the type of the setup object that [init] creates. Read it with [initOf].
+class AppFuseScope<T extends AppFuseInitialization> extends StatefulWidget {
   const AppFuseScope({
     required this.app,
     super.key,
     this.placeholder = const SizedBox.shrink(),
-    this.initTimeout = const Duration(minutes: 3),
+    this.keepNativeSplash = true,
+    this.initTimeout,
     this.storage,
     this.init,
     this.configs,
@@ -31,16 +35,33 @@ class AppFuseScope extends StatefulWidget {
   final Widget app;
 
   /// A widget to display while the app is initializing.
+  ///
+  /// At startup it shows only when [keepNativeSplash] is `false`.
   final Widget placeholder;
 
-  /// The maximum duration allowed for the entire initialization process.
-  final Duration initTimeout;
+  /// Keeps the native splash screen until the startup ends.
+  ///
+  /// When `true`, the scope defers the first frame until the startup is ready
+  /// or failed. [placeholder] and [progressBuilder] then show only during later
+  /// config switches and retries. When `false`, the first frame draws at once
+  /// and they also show at startup.
+  final bool keepNativeSplash;
+
+  /// The maximum duration allowed for the initialization.
+  ///
+  /// `null` (default) waits until initialization completes. The limit uses
+  /// wall-clock time, so it also runs while the OS suspends the app.
+  final Duration? initTimeout;
 
   /// The storage implementation for persisting settings. Defaults to [AppFuseShPrStorage].
   final IAppFuseStorage? storage;
 
-  /// The class that defines the asynchronous initialization steps.
-  final AppFuseInitialization? init;
+  /// Creates the object that defines the asynchronous initialization steps, for example `Dependencies.new`.
+  ///
+  /// Called at startup, after each config switch, and on a retry. AppFuse calls
+  /// [AppFuseInitialization.dispose] on the old object before it creates a new one.
+  /// Without [init], only the built-in steps run.
+  final T Function()? init;
 
   /// A list of available environment configurations for the app.
   final List<BaseConfig>? configs;
@@ -55,135 +76,255 @@ class AppFuseScope extends StatefulWidget {
   final Iterable<LocalizationsDelegate<dynamic>>? localizationsDelegates;
 
   /// A builder for a custom widget to display initialization progress.
-  final Widget Function(String message)? progressBuilder;
+  ///
+  /// [progress] is `null` before the first step. At startup it shows only when [keepNativeSplash] is `false`.
+  final Widget Function(AppFuseProgress? progress)? progressBuilder;
 
-  /// A builder for a custom widget to display when an error occurs.
-  final Widget Function(Object error, StackTrace? stackTrace)? errorBuilder;
+  /// A builder for the widget shown when initialization fails.
+  ///
+  /// Call `retry` to run the startup again with a new setup object.
+  final Widget Function(
+    Object error,
+    StackTrace? stackTrace,
+    VoidCallback retry,
+  )?
+  errorBuilder;
 
   /// A callback that fires with progress messages during initialization.
   final void Function(String message)? onProgress;
 
-  /// A callback that fires when an error occurs during initialization.
+  /// A callback that fires on each initialization error and failed write.
   final void Function(Object error, StackTrace stackTrace)? onError;
 
   @override
-  State<AppFuseScope> createState() => _AppFuseScopeState();
+  State<AppFuseScope<T>> createState() => _AppFuseScopeState<T>();
 
   /// Retrieves the [AppFuseController] from the nearest [AppFuseScope].
   /// Does not cause the widget to rebuild when the state changes.
-  static AppFuseController controller(BuildContext context) =>
-      _InheritedAppFuseScope.of(context, listen: false).controller;
+  static AppFuseController<AppFuseInitialization> controller(
+    BuildContext context,
+  ) => _InheritedAppFuseScope.of(context).controller;
 
-  /// Retrieves the current [AppFuseState] from the nearest [AppFuseScope].
-  static AppFuseState of(BuildContext context, {bool listen = false}) =>
-      _InheritedAppFuseScope.of(context, listen: listen).state;
+  /// Retrieves the setup object that [init] created, for example `Dependencies`.
+  ///
+  /// [T] must be the type of the scope. Throws a [StateError] when the scope
+  /// has another type or no [init].
+  static T initOf<T extends AppFuseInitialization>(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<_InheritedSetup<T>>()?.setup ??
+      (throw StateError(
+        'No setup of type $T found. Pass `init` with a $T to AppFuseScope<$T>.',
+      ));
 
   /// Retrieves the current [AppFuseState] from the nearest [AppFuseScope].
   /// Does not cause the widget to rebuild when the state changes.
-  static AppFuseState read(BuildContext context) => _InheritedAppFuseScope.of(context, listen: false).state;
+  static AppFuseState read(BuildContext context) =>
+      _InheritedAppFuseScope.of(context).state;
 
   /// Subscribes to the [AppFuseState] from the nearest [AppFuseScope].
-  /// Causes the widget to rebuild when the state changes.
-  static AppFuseState watch(BuildContext context) => _InheritedAppFuseScope.of(context, listen: true).state;
+  ///
+  /// The widget rebuilds when [aspect] changes, or on any change when [aspect] is `null`.
+  static AppFuseState watch(BuildContext context, [AppFuseAspect? aspect]) =>
+      _InheritedAppFuseScope.of(context, listen: true, aspect: aspect).state;
 }
 
-class _AppFuseScopeState extends State<AppFuseScope> {
-  late AppFuseController _controller;
+/// A part of [AppFuseState] that a widget can watch without rebuilding on other changes.
+enum AppFuseAspect {
+  config,
+  locale,
+  theme,
+  settings,
+  permissions,
+  metaData;
+
+  bool changed(AppFuseState old, AppFuseState next) => switch (this) {
+    config =>
+      old.config != next.config ||
+          old.configRevision != next.configRevision ||
+          !listEquals(old.configs, next.configs),
+    locale =>
+      old.locale != next.locale ||
+          old.userLocale != next.userLocale ||
+          !mapEquals(old.supportedLanguages, next.supportedLanguages) ||
+          !listEquals(old.localizationsDelegates, next.localizationsDelegates),
+    theme =>
+      old.themeMode != next.themeMode || !mapEquals(old.themes, next.themes),
+    settings => !mapEquals(old.customSettings, next.customSettings),
+    permissions => !mapEquals(old.permissions, next.permissions),
+    metaData => old.metaData != next.metaData,
+  };
+}
+
+class _AppFuseScopeState<T extends AppFuseInitialization>
+    extends State<AppFuseScope<T>> {
+  late final AppFuseController<T> _controller;
+  bool _isFirstFrameDeferred = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = AppFuseController(
+    if (widget.keepNativeSplash) {
+      WidgetsBinding.instance.deferFirstFrame();
+      _isFirstFrameDeferred = true;
+    }
+    _controller = AppFuseController<T>(
       setup: widget.init,
       initTimeout: widget.initTimeout,
       storage: widget.storage,
       configs: widget.configs,
+      themes: widget.themes,
       supportedLanguages: widget.supportedLanguages,
       localizationsDelegates: widget.localizationsDelegates,
-      themes: widget.themes,
-      onProgress: widget.onProgress ?? (m) => developer.log(m, name: 'app-fuse', time: DateTime.now()),
+      onProgress:
+          widget.onProgress ??
+          (m) => developer.log(m, name: 'app-fuse', time: DateTime.now()),
       onError:
           widget.onError ??
-          (e, s) => developer.log('$e', name: 'app-fuse', time: DateTime.now(), error: e, stackTrace: s),
+          (e, s) => developer.log(
+            '$e',
+            name: 'app-fuse',
+            time: DateTime.now(),
+            error: e,
+            stackTrace: s,
+          ),
+    );
+    if (_isFirstFrameDeferred) _controller.addListener(_allowFirstFrame);
+  }
+
+  /// Allows the first frame once, when the startup is no longer running.
+  void _allowFirstFrame() {
+    if (!_isFirstFrameDeferred || _controller.state.phase is AppFuseStarting) {
+      return;
+    }
+    _isFirstFrameDeferred = false;
+    _controller.removeListener(_allowFirstFrame);
+    WidgetsBinding.instance.allowFirstFrame();
+  }
+
+  /// Applies changed configs, themes, languages, and delegates. The other options apply only at startup.
+  ///
+  /// Compares by content, so values built inline in a rebuilding parent do not apply again.
+  @override
+  void didUpdateWidget(AppFuseScope<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    List<String>? names(List<BaseConfig>? configs) =>
+        configs?.map((config) => config.name).toList();
+    if (listEquals(names(widget.configs), names(oldWidget.configs)) &&
+        mapEquals(widget.themes, oldWidget.themes) &&
+        mapEquals(widget.supportedLanguages, oldWidget.supportedLanguages) &&
+        listEquals(
+          widget.localizationsDelegates?.toList(),
+          oldWidget.localizationsDelegates?.toList(),
+        )) {
+      return;
+    }
+    _controller.updateOptions(
+      configs: widget.configs,
+      themes: widget.themes,
+      supportedLanguages: widget.supportedLanguages,
+      localizationsDelegates: widget.localizationsDelegates,
     );
   }
 
   @override
   void dispose() {
+    if (_isFirstFrameDeferred) WidgetsBinding.instance.allowFirstFrame();
     _controller.dispose();
     super.dispose();
-  }
-
-  /// The currently selected configuration.
-  BaseConfig? _selectedConfig;
-
-  /// A unique key that forces the widget tree to rebuild when the config changes.
-  UniqueKey? _key;
-
-  /// Generates a new [UniqueKey] only when the configuration changes.
-  UniqueKey _getKey(BaseConfig config) {
-    if (_selectedConfig?.name == config.name) return _key ??= UniqueKey();
-    _selectedConfig = config;
-    return _key = UniqueKey();
   }
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<AppFuseState>(
     valueListenable: _controller,
-    builder: (context, state, _) {
-      if (state.isProcessing) {
-        return VitalApp(home: widget.progressBuilder?.call(state.progressMessage ?? '') ?? widget.placeholder);
-      }
-
-      if (state.hasError) {
-        return VitalApp(home: widget.errorBuilder?.call(state.error!, state.stackTrace) ?? ErrorWidget(state.error!));
-      }
-
-      final currentConfig = state.config;
-      if (currentConfig is EmptyConfig) {
-        return _InheritedAppFuseScope(controller: _controller, state: state, child: widget.app);
-      }
-
-      _key = _getKey(currentConfig);
-      final app = _InheritedAppFuseScope(state: state, controller: _controller, child: widget.app);
-
-      if (!currentConfig.showBanner) return KeyedSubtree(key: _key, child: app);
-      return KeyedSubtree(
-        key: _key,
-        child: Stack(
-          alignment: Alignment.topLeft,
-          children: [
-            app,
-            Directionality(
-              textDirection: TextDirection.ltr,
-              child: ConfigBanner(
-                name: currentConfig.name,
-                color: currentConfig.color,
-                onPressed: () {},
-                onLongPressed: () {},
-              ),
+    builder: (context, state, _) => switch (state.phase) {
+      AppFuseStarting(:final progress) => VitalApp(
+        theme: _shellTheme(context, state),
+        home: widget.progressBuilder?.call(progress) ?? widget.placeholder,
+      ),
+      AppFuseFailed(:final error, :final stackTrace) => VitalApp(
+        theme: _shellTheme(context, state),
+        home:
+            widget.errorBuilder?.call(
+              error,
+              stackTrace,
+              () => _controller.retry().ignore(),
+            ) ??
+            // The builder hides the error text in release builds.
+            ErrorWidget.builder(
+              FlutterErrorDetails(exception: error, stack: stackTrace),
             ),
-          ],
-        ),
-      );
+      ),
+      AppFuseReady() => _buildApp(state),
     },
   );
+
+  /// The theme of the placeholder and error screens: dark when the effective mode is dark and a dark theme exists.
+  ThemeData _shellTheme(BuildContext context, AppFuseState state) {
+    final isDark = switch (state.themeMode) {
+      ThemeMode.dark => true,
+      ThemeMode.light => false,
+      ThemeMode.system =>
+        MediaQuery.platformBrightnessOf(context) == Brightness.dark,
+    };
+    return (isDark ? state.darkTheme : null) ?? state.lightTheme;
+  }
+
+  Widget _buildApp(AppFuseState state) {
+    final config = state.config;
+    final setup = _controller.setup;
+    final app = _InheritedAppFuseScope(
+      controller: _controller,
+      state: state,
+      child: setup == null
+          ? widget.app
+          : _InheritedSetup<T>(setup: setup, child: widget.app),
+    );
+    if (config is EmptyConfig) return app;
+
+    // A new revision remounts the app, so it reads the new config values.
+    return KeyedSubtree(
+      key: ValueKey(state.configRevision),
+      child: config.showBanner
+          ? Stack(
+              alignment: Alignment.topLeft,
+              children: [
+                app,
+                Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: ConfigBanner(name: config.name, color: config.color),
+                ),
+              ],
+            )
+          : app,
+    );
+  }
 }
 
-/// An inherited widget that provides the [AppFuseState] and [AppFuseController] to the widget tree.
-class _InheritedAppFuseScope extends InheritedWidget {
-  const _InheritedAppFuseScope({required this.state, required this.controller, required super.child});
+/// Provides the setup object of type [T] to the app.
+///
+/// The app mounts again after each new setup object, so it does not listen for changes.
+class _InheritedSetup<T extends AppFuseInitialization> extends InheritedWidget {
+  const _InheritedSetup({required this.setup, required super.child});
+
+  final T setup;
+
+  @override
+  bool updateShouldNotify(_InheritedSetup<T> oldWidget) =>
+      !identical(oldWidget.setup, setup);
+}
+
+/// Provides the [AppFuseState] and [AppFuseController] to the widget tree.
+class _InheritedAppFuseScope extends InheritedModel<AppFuseAspect> {
+  const _InheritedAppFuseScope({
+    required this.state,
+    required this.controller,
+    required super.child,
+  });
 
   /// The current state of the application.
   final AppFuseState state;
 
   /// The controller for managing the application's state.
-  final AppFuseController controller;
-
-  /// The state from the closest instance of this class that encloses the given context, if any.
-  static _InheritedAppFuseScope? maybeOf(BuildContext context, {bool listen = true}) => listen
-      ? context.dependOnInheritedWidgetOfExactType<_InheritedAppFuseScope>()
-      : context.getInheritedWidgetOfExactType<_InheritedAppFuseScope>();
+  final AppFuseController<AppFuseInitialization> controller;
 
   static Never _notFoundInheritedWidgetOfExactType() => throw ArgumentError(
     'Out of scope, not found inherited widget '
@@ -191,62 +332,48 @@ class _InheritedAppFuseScope extends InheritedWidget {
     'out_of_scope',
   );
 
-  /// The state from the closest instance of this class that encloses the given context.
-  static _InheritedAppFuseScope of(BuildContext context, {bool listen = true}) =>
-      maybeOf(context, listen: listen) ?? _notFoundInheritedWidgetOfExactType();
+  /// The closest instance of this class that encloses the given context.
+  static _InheritedAppFuseScope of(
+    BuildContext context, {
+    bool listen = false,
+    AppFuseAspect? aspect,
+  }) =>
+      (listen
+          ? InheritedModel.inheritFrom<_InheritedAppFuseScope>(
+              context,
+              aspect: aspect,
+            )
+          : context.getInheritedWidgetOfExactType<_InheritedAppFuseScope>()) ??
+      _notFoundInheritedWidgetOfExactType();
 
   @override
-  bool updateShouldNotify(covariant _InheritedAppFuseScope oldWidget) => !identical(oldWidget.state, state);
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<AppFuseState>('state', state));
+  }
+
+  @override
+  bool updateShouldNotify(covariant _InheritedAppFuseScope oldWidget) =>
+      !identical(oldWidget.state, state);
+
+  @override
+  bool updateShouldNotifyDependent(
+    covariant _InheritedAppFuseScope oldWidget,
+    Set<AppFuseAspect> dependencies,
+  ) => dependencies.any((aspect) => aspect.changed(oldWidget.state, state));
 }
 
 /// An extension on [BuildContext] to provide easy access to AppFuse properties.
 extension $AppFuseContext on BuildContext {
   /// Shortcut for accessing the [AppFuseController].
-  AppFuseController get fuse => AppFuseScope.controller(this);
+  AppFuseController<AppFuseInitialization> get fuse =>
+      AppFuseScope.controller(this);
 
-  /// Shortcut for reading the current [AppFuseState] without listening for changes.
-  AppFuseState get readFuseState => AppFuseScope.read(this);
+  /// The currently active [Locale]. Rebuilds only on locale changes.
+  Locale get currentLocale =>
+      AppFuseScope.watch(this, AppFuseAspect.locale).locale;
 
-  /// Shortcut for watching the current [AppFuseState] for changes.
-  AppFuseState get watchFuseState => AppFuseScope.watch(this);
-
-  /// The currently active [Locale].
-  Locale get currentLocale => watchFuseState.locale;
-
-  /// The language tag for the current locale (e.g., "en-US").
-  String get currentLanguage => currentLocale.toLanguageTag();
-
-  /// The human-readable name of the current language (e.g., "English").
-  String get currentLanguageName => supportedLanguages[currentLocale]!;
-
-  /// The language code for the current locale (e.g., "en").
-  String get currentLanguageCode => currentLocale.languageCode;
-
-  /// An iterable of all supported locales.
-  Iterable<Locale> get supportedLocales => fuse.supportedLocales;
-
-  /// A map of all supported locales and their names.
-  Map<Locale, String> get supportedLanguages => fuse.supportedLanguages;
-
-  /// Changes the application's active locale.
-  Future<void> changeAppLocale(Locale locale) => fuse.changeLocale(locale);
-
-  /// An iterable of all supported themes.
-  Iterable<ThemeMode> get supportedThemes {
-    final result = [ThemeMode.light];
-    if (fuse.state.darkTheme != null) result.addAll([ThemeMode.dark, ThemeMode.system]);
-    return result;
-  }
-
-  /// The currently active [ThemeMode].
-  ThemeMode get currentThemeMode => watchFuseState.themeMode;
-
-  /// The name of the current theme mode (e.g., "dark").
-  String get currentThemeModeName => currentThemeMode.name;
-
-  /// Changes the application's active theme mode.
-  Future<void> changeAppThemeMode(ThemeMode themeMode) => fuse.changeThemeMode(themeMode);
-
-  /// Changes the application's active config. Will reload whole app
-  Future<void> changeConfig(BaseConfig config) => fuse.activateConfig(config);
+  /// The currently active [ThemeMode]. Rebuilds only on theme changes.
+  ThemeMode get currentThemeMode =>
+      AppFuseScope.watch(this, AppFuseAspect.theme).themeMode;
 }
