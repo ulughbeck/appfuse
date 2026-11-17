@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -41,10 +41,9 @@ abstract class _AppFuseBase<T extends AppFuseInitialization>
     required this.initTimeout,
     required this.onProgress,
     required this.onError,
-    required IAppFuseStorage? storage,
+    required this._storage,
     T Function()? setup,
-  }) : _storage = storage,
-       _createSetup = setup;
+  }) : _createSetup = setup;
 
   /// Limits the initialization. `null` waits until it completes.
   final Duration? initTimeout;

@@ -1,7 +1,7 @@
 // ignore_for_file: avoid_print
 
 import 'package:appfuse/appfuse.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 void main() {
   // AppFuseScope runs the initialization and provides the state to the app.
@@ -151,9 +151,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     // A custom setting that was not saved reads as null.
-    final onboardingComplete = AppFuseScope.read(
-      context,
-    ).getCustomSetting<bool>('onboarding');
+    final onboardingComplete = AppFuseScope.read(context)
+        .getCustomSetting<bool>('onboarding');
     print('Onboarding complete: $onboardingComplete');
 
     final dependencyA = Dependencies.of(context).dependencyA;

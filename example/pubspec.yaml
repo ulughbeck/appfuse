@@ -2,7 +2,7 @@ name: example
 publish_to: "none"
 
 environment:
-  sdk: ^3.11.0
+  sdk: ^3.13.0
 
 resolution: workspace
 
@@ -11,7 +11,8 @@ dependencies:
     sdk: flutter
   appfuse:
     path: ../
-  
+  material_ui: ^1.11.1
+
 flutter:
   uses-material-design: true
 

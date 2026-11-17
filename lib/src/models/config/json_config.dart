@@ -21,11 +21,11 @@ Map<String, Object?> _decodeConfig(String source) =>
 /// A configuration that loads its values from a local JSON asset file.
 abstract class JsonAssetConfig extends BaseConfig with ConfigValues {
   JsonAssetConfig({
-    required String path,
+    required this._path,
     required super.name,
     super.color = const Color(0xFFCCCCCC),
     super.showBanner = false,
-  }) : _path = path;
+  });
 
   final String _path;
 
@@ -49,18 +49,15 @@ enum HttpMethod { get, post }
 abstract class JsonRemoteConfig extends BaseConfig with ConfigValues {
   /// Sends the request with [client] when given. Else each request uses a new client that closes after it.
   JsonRemoteConfig({
-    required String uri,
+    required this._uri,
     required super.name,
     super.color = const Color(0xFFCCCCCC),
     super.showBanner = false,
-    HttpMethod httpMethod = HttpMethod.get,
-    Map<String, String>? headers,
-    http.Client? client,
+    this._httpMethod = HttpMethod.get,
+    this._headers,
+    this._client,
     this.timeout = const Duration(seconds: 30),
-  }) : _uri = uri,
-       _httpMethod = httpMethod,
-       _headers = headers,
-       _client = client;
+  });
 
   final String _uri;
   final HttpMethod _httpMethod;

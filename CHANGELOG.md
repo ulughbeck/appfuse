@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.4
+
+- **Breaking**: migrated from the deprecated `package:flutter/material.dart` to [`material_ui`](https://pub.dev/packages/material_ui). Apps must import `package:material_ui/material_ui.dart` to pass `ThemeData` and `ThemeMode` to appfuse.
+- **Dependencies**: added `material_ui` ^1.11.1. Requires Dart 3.13 and Flutter 3.47.
+
 ## 0.0.3
 
 - **Breaking**: smaller API: `AppFuseScope.read`, `watch(context, aspect)`, `controller`, `initOf<T>`, and `context.fuse`. `init:` takes a factory (`Dependencies.new`), `AppFuseState.phase` replaces `isProcessing`/`error`/`progress`, configs read values with a typed `ConfigKey<T>`, and `IAppFuseStorage` stores strings. `Header` and `SettingTile` are now `AppFuseSettingsHeader` and `AppFuseSettingTile`. Only `Permission`, `PermissionStatus`, and their getters are re-exported from `permission_handler`. Android needs `compileSdk = 37`, and there `checkPermissionStatus` no longer returns `permanentlyDenied`.

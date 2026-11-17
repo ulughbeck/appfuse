@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../models/models.dart';
 import '../foundation/scope.dart';
@@ -46,12 +46,12 @@ enum _RenderMode { sheet, dialog }
 @immutable
 class ConfigSettings extends StatelessWidget {
   const ConfigSettings._({
-    required _RenderMode mode,
+    required this._mode,
     super.key,
     this.children,
     this.onClose,
     this.backgroundColor,
-  }) : _mode = mode;
+  });
 
   factory ConfigSettings.sheet({
     Key? key,
